@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build", 
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@twa-dev/sdk": "^8.0.2",
     "framer-motion": "^12.24.10",
     "lucide-react": "^0.562.0",
