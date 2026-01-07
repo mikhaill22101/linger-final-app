@@ -1,4 +1,4 @@
-import WebApp from '@twa-dev/sdk';
+import WebApp from '@twa-dev/sdk'; 
 import React, { useState, useEffect } from 'react'; // Проверь наличие useEffect здесь
 import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
