@@ -390,7 +390,7 @@ function App() {
         ) : activeTab === 'profile' ? (
           <Profile />
         ) : (
-          <MapScreen activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+          <MapScreen key={activeTab} activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
         )}
       </div>
 
