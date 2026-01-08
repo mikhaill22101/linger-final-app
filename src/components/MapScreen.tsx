@@ -41,18 +41,20 @@ function getUserLocation(): Promise<GeoLocation | null> {
 }
 
 async function loadImpulses(): Promise<ImpulseLocation[]> {
-  const { data, error } = await supabase
-    .from('impulses')
-    .select('id, content, category, creator_id, created_at, location_lat, location_lng');
+  try {
+    const { data, error } = await supabase
+      .from('impulses')
+      .select('id, content, category, creator_id, created_at, location_lat, location_lng');
 
-  if (error) {
-    try {
-      WebApp.showAlert(`Ошибка загрузки данных: ${error.message}`);
-    } catch {
-      // ignore
+    if (error) {
+      console.error('Supabase error loading impulses:', error);
+      try {
+        WebApp.showAlert(`Ошибка загрузки данных: ${error.message}`);
+      } catch {
+        // ignore
+      }
+      return [];
     }
-    return [];
-  }
 
   const rows = (data || []) as ImpulseRow[];
 
@@ -83,14 +85,18 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
     }
   }
 
-  return withLocation.map((row) => ({
-    id: row.id,
-    content: row.content,
-    category: row.category,
-    author_name: profilesMap.get(row.creator_id) || undefined,
-    location_lat: row.location_lat as number,
-    location_lng: row.location_lng as number,
-  }));
+    return withLocation.map((row) => ({
+      id: row.id,
+      content: row.content,
+      category: row.category,
+      author_name: profilesMap.get(row.creator_id) || undefined,
+      location_lat: row.location_lat as number,
+      location_lng: row.location_lng as number,
+    }));
+  } catch (error) {
+    console.error('Error in loadImpulses:', error);
+    return [];
+  }
 }
 
 const MapScreen: React.FC = () => {
@@ -102,8 +108,8 @@ const MapScreen: React.FC = () => {
 
   useEffect(() => {
     try {
-    WebApp.ready();
-    WebApp.expand();
+      WebApp.ready();
+      WebApp.expand();
     } catch (e) {
       console.error('Error initializing WebApp:', e);
     }
