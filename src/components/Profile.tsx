@@ -45,7 +45,11 @@ const Profile: React.FC = () => {
     const loadProfile = async () => {
       if (typeof window === 'undefined') return;
 
-      const tgWebApp = (window as any).Telegram?.WebApp;
+      const tgWebApp = (window as unknown as { Telegram?: { WebApp?: {
+        initDataUnsafe?: { user?: TelegramUser };
+        ready?: () => void;
+        expand?: () => void;
+      } } }).Telegram?.WebApp;
 
       try {
         const user: TelegramUser | undefined = tgWebApp?.initDataUnsafe?.user;
@@ -97,33 +101,31 @@ const Profile: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (profile.telegramId) {
-      loadMyImpulses();
-    }
-  }, [profile.telegramId]);
+    const loadMyImpulses = async () => {
+      if (!profile.telegramId) return;
 
-  const loadMyImpulses = async () => {
-    if (!profile.telegramId) return;
+      try {
+        setIsLoadingImpulses(true);
+        const { data, error } = await supabase
+          .from('impulses')
+          .select('id, content, category, created_at')
+          .eq('creator_id', profile.telegramId)
+          .order('created_at', { ascending: false });
 
-    try {
-      setIsLoadingImpulses(true);
-      const { data, error } = await supabase
-        .from('impulses')
-        .select('id, content, category, created_at')
-        .eq('creator_id', profile.telegramId)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error loading my impulses:', error);
-      } else {
-        setMyImpulses(data || []);
+        if (error) {
+          console.error('Error loading my impulses:', error);
+        } else {
+          setMyImpulses(data || []);
+        }
+      } catch (err) {
+        console.error('Failed to load my impulses:', err);
+      } finally {
+        setIsLoadingImpulses(false);
       }
-    } catch (err) {
-      console.error('Failed to load my impulses:', err);
-    } finally {
-      setIsLoadingImpulses(false);
-    }
-  };
+    };
+
+    loadMyImpulses();
+  }, [profile.telegramId]);
 
   const handleDeleteImpulse = async (id: number) => {
     try {
@@ -186,7 +188,7 @@ const Profile: React.FC = () => {
     setIsSaving(true);
 
     const tgWebApp = (typeof window !== 'undefined'
-      ? (window as any).Telegram?.WebApp
+      ? (window as unknown as { Telegram?: { WebApp?: { HapticFeedback?: { impactOccurred?: (style: string) => void } } } }).Telegram?.WebApp
       : undefined);
 
     try {
@@ -213,7 +215,7 @@ const Profile: React.FC = () => {
         // Optional: light haptic feedback when available
         try {
           tgWebApp?.HapticFeedback?.impactOccurred?.('light');
-        } catch (err) {
+        } catch {
           // Non‑critical, ignore
         }
       }

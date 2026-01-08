@@ -11,12 +11,29 @@ afterEach(() => {
   cleanup();
 });
 
-const setupTelegramUser = (user?: {
+interface MockTelegramUser {
   first_name?: string;
   username?: string;
   photo_url?: string;
-}) => {
-  (window as any).Telegram = {
+}
+
+interface MockTelegramWebApp {
+  initDataUnsafe?: { user?: MockTelegramUser };
+  ready: () => void;
+  expand: () => void;
+  HapticFeedback: {
+    impactOccurred: (style: string) => void;
+  };
+}
+
+interface MockTelegramGlobal {
+  Telegram?: {
+    WebApp?: MockTelegramWebApp;
+  };
+}
+
+const setupTelegramUser = (user?: MockTelegramUser) => {
+  (window as unknown as MockTelegramGlobal).Telegram = {
     WebApp: {
       initDataUnsafe: { user },
       ready: vi.fn(),
@@ -30,7 +47,7 @@ const setupTelegramUser = (user?: {
 
 describe('Profile component', () => {
   it('initializes state correctly with default values', () => {
-    delete (window as any).Telegram;
+    delete (window as unknown as MockTelegramGlobal).Telegram;
 
     render(<Profile />);
 
@@ -88,7 +105,7 @@ describe('Profile component', () => {
       throw new Error('haptic failed');
     });
 
-    (window as any).Telegram = {
+    (window as unknown as MockTelegramGlobal).Telegram = {
       WebApp: {
         HapticFeedback: {
           impactOccurred: impactSpy,
