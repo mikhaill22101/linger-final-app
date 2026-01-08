@@ -38,7 +38,8 @@ const MapScreen: React.FC = () => {
       console.log('[MapScreen] initMap called');
       
       if (!mapRef.current) {
-        console.error('[MapScreen] mapRef.current is null');
+        console.warn('[MapScreen] mapRef.current is null, retrying on next tick');
+        setTimeout(initMap, 0);
         return;
       }
 

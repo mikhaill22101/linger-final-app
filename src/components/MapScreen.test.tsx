@@ -11,7 +11,11 @@ import {
 import MapScreen from './MapScreen';
 
 // --- Mocks for Telegram WebApp SDK ---
-const hapticMock = vi.fn();
+const { hapticMock } = vi.hoisted(() => {
+  return {
+    hapticMock: vi.fn(),
+  };
+});
 
 vi.mock('@twa-dev/sdk', () => {
   return {
@@ -37,15 +41,13 @@ interface Impulse {
   location_lng?: number | null;
 }
 
-let supabaseResponse: { data: Impulse[] | null; error: any } = {
-  data: [],
-  error: null,
-};
+const { fromMock, setSupabaseResponse } = vi.hoisted(() => {
+  let supabaseResponse: { data: Impulse[] | null; error: any } = {
+    data: [],
+    error: null,
+  };
 
-const fromMock = vi.fn();
-
-vi.mock('../lib/supabase', () => {
-  const createQueryBuilder = () => {
+  const fromMockInner = vi.fn(() => {
     const builder: any = {
       select: vi.fn().mockReturnThis(),
       not: vi.fn().mockReturnThis(),
@@ -53,10 +55,17 @@ vi.mock('../lib/supabase', () => {
       then: (onFulfilled: (value: any) => any) => onFulfilled(supabaseResponse),
     };
     return builder;
+  });
+
+  return {
+    fromMock: fromMockInner,
+    setSupabaseResponse: (value: { data: Impulse[] | null; error: any }) => {
+      supabaseResponse = value;
+    },
   };
+});
 
-  fromMock.mockImplementation(() => createQueryBuilder());
-
+vi.mock('../lib/supabase', () => {
   return {
     supabase: {
       from: fromMock,
@@ -104,7 +113,7 @@ const createYandexMapsMocks = () => {
 };
 
 beforeEach(() => {
-  supabaseResponse = { data: [], error: null };
+  setSupabaseResponse({ data: [], error: null });
   fromMock.mockClear();
   hapticMock.mockClear();
 });
@@ -113,9 +122,6 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   delete (window as any).ymaps3;
-  // Reset geolocation between tests
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (navigator as any).geolocation = undefined;
 });
 
 // --- Tests ---
@@ -172,7 +178,7 @@ describe('MapScreen', () => {
       },
     ];
 
-    supabaseResponse = { data: impulses, error: null };
+    setSupabaseResponse({ data: impulses, error: null });
 
     render(<MapScreen />);
 
@@ -217,7 +223,7 @@ describe('MapScreen', () => {
       },
     ];
 
-    supabaseResponse = { data: impulses, error: null };
+    setSupabaseResponse({ data: impulses, error: null });
 
     render(<MapScreen />);
 
@@ -242,7 +248,7 @@ describe('MapScreen', () => {
       location_lng: 70,
     };
 
-    supabaseResponse = { data: [impulse], error: null };
+    setSupabaseResponse({ data: [impulse], error: null });
 
     render(<MapScreen />);
 
@@ -276,7 +282,7 @@ describe('MapScreen', () => {
       location_lng: 70,
     };
 
-    supabaseResponse = { data: [impulse], error: null };
+    setSupabaseResponse({ data: [impulse], error: null });
 
     render(<MapScreen />);
 
