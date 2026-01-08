@@ -110,6 +110,13 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feed, setFeed] = useState<Impulse[]>([]);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
+  
+  // Многошаговая форма создания события
+  const [step, setStep] = useState<'category' | 'description' | 'location'>('category');
+  const [eventAddress, setEventAddress] = useState('');
+  const [eventCoords, setEventCoords] = useState<[number, number] | null>(null);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [mapRefreshTrigger, setMapRefreshTrigger] = useState(0);
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -146,8 +153,11 @@ function App() {
 
   const handleCategoryClick = (id: string) => {
     setSelectedCategory(id);
+    setStep('description'); // Начинаем с шага описания
     setModalOpen(true);
     setMessageContent('');
+    setEventAddress('');
+    setEventCoords(null);
     
     // Устанавливаем активную категорию для подсветки маркеров на карте
     const category = categories.find(cat => cat.id === id);
@@ -187,8 +197,66 @@ function App() {
     setModalOpen(false);
     setSelectedCategory(null);
     setMessageContent('');
+    setStep('category');
+    setEventAddress('');
+    setEventCoords(null);
     // Сбрасываем активную категорию при закрытии модального окна
     setActiveCategory(null);
+  };
+
+  // Функция геокодирования адреса
+  const handleAddressSearch = async (address: string) => {
+    if (!address.trim()) {
+      return;
+    }
+
+    setIsSearchingAddress(true);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`,
+        {
+          headers: {
+            'User-Agent': 'LingerApp/1.0',
+          },
+        }
+      );
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        const { lat, lon } = data[0];
+        const coords: [number, number] = [parseFloat(lat), parseFloat(lon)];
+        setEventCoords(coords);
+        setEventAddress(data[0].display_name || address);
+        
+        console.log('[handleAddressSearch] Найден адрес:', data[0].display_name, 'координаты:', coords);
+        
+        // Переключаемся на карту и центрируем (если MapScreen поддерживает)
+        if (activeTab !== 'map') {
+          setActiveTab('map');
+          // Небольшая задержка для загрузки карты
+          setTimeout(() => {
+            // Координаты сохранены, MapScreen должен их использовать при добавлении маркера
+          }, 500);
+        }
+        
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+          } catch (e) {
+            console.warn('Haptic feedback error:', e);
+          }
+        }
+      } else {
+        WebApp.showAlert(isRussian ? 'Адрес не найден. Попробуйте другой вариант.' : 'Address not found. Try another one.');
+        setEventCoords(null);
+      }
+    } catch (error) {
+      console.error('[handleAddressSearch] Ошибка геокодирования:', error);
+      WebApp.showAlert(isRussian ? 'Ошибка при поиске адреса' : 'Error searching address');
+      setEventCoords(null);
+    } finally {
+      setIsSearchingAddress(false);
+    }
   };
 
   const getCurrentLocation = (): Promise<{ lat: number; lng: number } | null> => {
@@ -219,6 +287,18 @@ function App() {
       return;
     }
 
+    // Если на шаге описания, переходим к шагу выбора места
+    if (step === 'description') {
+      setStep('location');
+      return;
+    }
+
+    // Если на шаге выбора места, проверяем адрес
+    if (step === 'location' && !eventCoords) {
+      WebApp.showAlert(isRussian ? 'Пожалуйста, укажите адрес' : 'Please specify an address');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -234,11 +314,18 @@ function App() {
       const category = categories.find(cat => cat.id === selectedCategory);
       const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
 
-      const location = await getCurrentLocation();
+      // Используем координаты из геокодирования, если они есть
       const locationData: { location_lat?: number; location_lng?: number } = {};
-      if (location) {
-        locationData.location_lat = location.lat;
-        locationData.location_lng = location.lng;
+      if (eventCoords) {
+        locationData.location_lat = eventCoords[0];
+        locationData.location_lng = eventCoords[1];
+      } else {
+        // Fallback на текущую геопозицию, если адрес не указан
+        const location = await getCurrentLocation();
+        if (location) {
+          locationData.location_lat = location.lat;
+          locationData.location_lng = location.lng;
+        }
       }
 
       const { data, error } = await supabase
@@ -257,17 +344,22 @@ function App() {
         WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
       } else {
         console.log('Message sent successfully:', data);
-        WebApp.showAlert(isRussian ? 'Сообщение успешно отправлено!' : 'Message sent successfully!');
+        WebApp.showAlert(isRussian ? 'Событие успешно создано!' : 'Event created successfully!');
         handleCloseModal();
         loadFeed();
+        // Обновляем карту
+        setMapRefreshTrigger(prev => prev + 1);
+        // Переключаемся на карту, чтобы показать новое событие
+        if (activeTab !== 'map') {
+          setActiveTab('map');
+        }
       }
     } catch (err) {
       console.error('Failed to send message:', err);
       try {
-        WebApp.showAlert(JSON.stringify(err));
+        WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
       } catch (alertError) {
         console.error('Failed to show error alert:', alertError);
-        WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
       }
     } finally {
       setIsSubmitting(false);
@@ -390,7 +482,12 @@ function App() {
         ) : activeTab === 'profile' ? (
           <Profile />
         ) : (
-          <MapScreen key={activeTab} activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+          <MapScreen 
+            key={activeTab} 
+            activeCategory={activeCategory} 
+            onCategoryChange={setActiveCategory}
+            refreshTrigger={mapRefreshTrigger}
+          />
         )}
       </div>
 
@@ -408,7 +505,8 @@ function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-50 max-w-md mx-auto"
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-50 max-w-md mx-auto max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-light text-white">
@@ -425,33 +523,98 @@ function App() {
                 </button>
               </div>
 
-              <textarea
-                value={messageContent}
-                onChange={(e) => setMessageContent(e.target.value)}
-                placeholder={isRussian ? 'Напишите ваше сообщение...' : 'Write your message...'}
-                className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
-                autoFocus
-              />
-
-              <div className="flex gap-3">
-                <button
-                  onClick={handleCloseModal}
-                  disabled={isSubmitting}
-                  className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text.white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
-                >
-                  {isRussian ? 'Отмена' : 'Cancel'}
-                </button>
-                <button
-                  onClick={handleSendMessage}
-                  disabled={isSubmitting || !messageContent.trim()}
-                  className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting 
-                    ? (isRussian ? 'Отправка...' : 'Sending...') 
-                    : (isRussian ? 'Отправить' : 'Send')
-                  }
-                </button>
+              {/* Индикатор шагов */}
+              <div className="flex items-center gap-2 mb-4">
+                <div className={`flex-1 h-1 rounded-full ${step === 'description' || step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
+                <div className={`flex-1 h-1 rounded-full ${step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
               </div>
+
+              {/* Шаг 1: Описание */}
+              {step === 'description' && (
+                <>
+                  <textarea
+                    value={messageContent}
+                    onChange={(e) => setMessageContent(e.target.value)}
+                    placeholder={isRussian ? 'Напишите описание события...' : 'Write event description...'}
+                    className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
+                    autoFocus
+                  />
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleCloseModal}
+                      disabled={isSubmitting}
+                      className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
+                    >
+                      {isRussian ? 'Отмена' : 'Cancel'}
+                    </button>
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={isSubmitting || !messageContent.trim()}
+                      className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isRussian ? 'Указать место' : 'Specify Location'}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* Шаг 2: Выбор места */}
+              {step === 'location' && (
+                <>
+                  <div className="mb-4">
+                    <label className="block text-sm text-white/70 mb-2">
+                      {isRussian ? 'Адрес события' : 'Event Address'}
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={eventAddress}
+                        onChange={(e) => setEventAddress(e.target.value)}
+                        onBlur={(e) => {
+                          if (e.target.value.trim()) {
+                            handleAddressSearch(e.target.value);
+                          }
+                        }}
+                        placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
+                        className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
+                        autoFocus
+                      />
+                      {isSearchingAddress && (
+                        <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    {eventCoords && (
+                      <p className="mt-2 text-xs text-green-400 flex items-center gap-1">
+                        <MapPin size={12} />
+                        {isRussian ? 'Адрес найден!' : 'Address found!'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setStep('description')}
+                      disabled={isSubmitting}
+                      className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
+                    >
+                      {isRussian ? 'Назад' : 'Back'}
+                    </button>
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={isSubmitting || !eventCoords}
+                      className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSubmitting 
+                        ? (isRussian ? 'Создание...' : 'Creating...') 
+                        : (isRussian ? 'Создать событие' : 'Create Event')
+                      }
+                    </button>
+                  </div>
+                </>
+              )}
             </motion.div>
           </>
         )}

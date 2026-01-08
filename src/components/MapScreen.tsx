@@ -188,9 +188,10 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
 interface MapScreenProps {
   activeCategory?: string | null;
   onCategoryChange?: (category: string | null) => void;
+  refreshTrigger?: number; // При изменении этого значения карта обновляет данные
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -340,6 +341,47 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
       }, 150); // Дополнительная задержка для Telegram Mini App
     });
   }, []);
+
+  // Обновляем данные при изменении refreshTrigger
+  useEffect(() => {
+    if (status === 'ready' && refreshTrigger && refreshTrigger > 0) {
+      console.log('[MapScreen] Обновление данных по refreshTrigger:', refreshTrigger);
+      const reloadData = async () => {
+        const loadedImpulses = await loadImpulses();
+        setImpulses(loadedImpulses);
+        
+        if (mapInstanceRef.current && loadedImpulses.length > 0) {
+          mapInstanceRef.current.setMarkers(loadedImpulses, async (impulse) => {
+            let impulseWithAddress = impulse;
+            if (!impulse.address) {
+              const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
+              if (!addressCacheRef.current.has(cacheKey)) {
+                const address = await getAddress(impulse.location_lat, impulse.location_lng);
+                addressCacheRef.current.set(cacheKey, address);
+                impulseWithAddress = { ...impulse, address };
+                setImpulses(prev => prev.map(i => 
+                  i.id === impulse.id ? impulseWithAddress : i
+                ));
+              } else {
+                impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
+              }
+            }
+            
+            setSelectedImpulse(impulseWithAddress);
+            
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+              } catch (e) {
+                console.warn('[MapScreen] Haptic error:', e);
+              }
+            }
+          }, activeCategory || null);
+        }
+      };
+      reloadData();
+    }
+  }, [refreshTrigger, status, activeCategory]);
 
   // Обновляем маркеры при изменении активной категории
   useEffect(() => {
@@ -587,12 +629,33 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
                 </p>
               )}
               
-              <button
-                onClick={handleFlyToMarker}
-                className="w-full mt-2 px-4 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
-              >
-                📍 Найти на карте
-              </button>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={handleFlyToMarker}
+                  className="flex-1 px-4 py-2 bg-white/10 border border-white/20 text-white text-xs font-semibold rounded-xl hover:bg-white/20 transition-colors"
+                >
+                  📍 Найти на карте
+                </button>
+                <button
+                  onClick={() => {
+                    // Вибрация
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {}
+                    }
+                    // Показываем alert для теста
+                    if (window.Telegram?.WebApp?.showAlert) {
+                      window.Telegram.WebApp.showAlert('Вы присоединились!');
+                    } else {
+                      alert('Вы присоединились!');
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
+                >
+                  ✋ Присоединиться
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
