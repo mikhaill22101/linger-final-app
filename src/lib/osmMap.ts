@@ -4,11 +4,11 @@ import { categoryColors } from './categoryColors';
 
 // Leaflet CSS подключен в src/index.css
 
-// Функция для создания кастомной иконки маркера с цветом и анимацией
+// Функция создания иконки маркера
 function createMarkerIcon(color: string, isActive: boolean, size: number = 20): DivIcon {
   const baseSize = size;
   const shadowSize = isActive ? 20 : 10;
-  const activeClass = isActive ? 'marker-active glowing-marker' : '';
+  const activeClass = isActive ? 'marker-active active-glow' : '';
   
   return L.divIcon({
     className: `custom-marker ${activeClass}`,
@@ -32,8 +32,14 @@ function createMarkerIcon(color: string, isActive: boolean, size: number = 20): 
 
 export const osmMapAdapter: MapAdapter = {
   async initMap(container: HTMLDivElement, center: GeoLocation, zoom: number = 14): Promise<MapInstance> {
-    const map: LeafletMap = L.map(container).setView([center.lat, center.lng], zoom);
+    // Создаем карту
+    const map: LeafletMap = L.map(container, {
+      center: [center.lat, center.lng],
+      zoom: zoom,
+      zoomControl: true,
+    });
 
+    // Добавляем тайлы OpenStreetMap
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
@@ -51,12 +57,12 @@ export const osmMapAdapter: MapAdapter = {
         map.remove();
       },
       setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null) {
-        // Сохраняем данные для фильтрации
+        // Сохраняем данные
         currentImpulses = impulses;
         currentOnClick = onClick;
         currentActiveCategory = activeCategory || null;
 
-        // Фильтруем импульсы по категории, если выбрана
+        // Фильтруем по категории, если выбрана
         const filteredImpulses = currentActiveCategory
           ? impulses.filter(impulse => impulse.category === currentActiveCategory)
           : impulses;
@@ -65,11 +71,11 @@ export const osmMapAdapter: MapAdapter = {
         markers.forEach((m) => m.remove());
         markers = [];
 
-        // Создаем новые маркеры с цветами и анимацией
+        // Создаем новые маркеры
         filteredImpulses.forEach((impulse) => {
           const categoryName = impulse.category;
           const isActive = currentActiveCategory === categoryName;
-          const color = categoryColors[categoryName] || '#3498db'; // Цвет по умолчанию
+          const color = categoryColors[categoryName] || '#3498db';
           
           const icon = createMarkerIcon(color, isActive);
           const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);

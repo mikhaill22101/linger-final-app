@@ -157,9 +157,9 @@ function App() {
     }
     
     // Вибрация при клике на категорию
-    if (WebApp.HapticFeedback) {
+    if (window.Telegram?.WebApp?.HapticFeedback) {
       try {
-        WebApp.HapticFeedback.impactOccurred('medium');
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       } catch (e) {
         console.warn('Haptic feedback error:', e);
       }
