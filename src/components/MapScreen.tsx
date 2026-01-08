@@ -28,6 +28,7 @@ const MapScreen: React.FC = () => {
   const [, setImpulses] = useState<Impulse[]>([]); // Используется только через setImpulses
   const [selectedImpulse, setSelectedImpulse] = useState<Impulse | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  const isMapInitializedRef = useRef(false);
 
   useEffect(() => {
     console.log('[MapScreen] ✅ Component mounted');
@@ -55,6 +56,12 @@ const MapScreen: React.FC = () => {
 
     const initMap = async () => {
       console.log('[MapScreen] 🚀 initMap called');
+
+      // Не инициализируем карту повторно, если она уже создана
+      if (isMapInitializedRef.current) {
+        console.log('[MapScreen] ℹ️ Map already initialized, skipping initMap');
+        return;
+      }
       
       if (!mapRef.current) {
         console.warn('[MapScreen] ⚠️ mapRef.current is null, retrying on next tick');
@@ -264,6 +271,7 @@ const MapScreen: React.FC = () => {
         console.log('[MapScreen] ✅ YMapDefaultFeaturesLayer added - Слои добавлены');
 
         mapInstanceRef.current = map;
+        isMapInitializedRef.current = true;
         (window as any).ymaps3YMap = YMap;
         (window as any).ymaps3Markers = YMapMarker;
 
@@ -308,6 +316,9 @@ const MapScreen: React.FC = () => {
           mapInstanceRef.current.destroy();
         } catch (e) {
           console.error('[MapScreen] Error destroying map:', e);
+        } finally {
+          mapInstanceRef.current = null;
+          isMapInitializedRef.current = false;
         }
       }
     };
@@ -445,8 +456,8 @@ const MapScreen: React.FC = () => {
       console.log('[MapScreen] 📍 Adding new markers...');
       let addedCount = 0;
       impulsesData.forEach((impulse, index) => {
-        // Проверяем наличие координат из Supabase
-        if (!impulse.location_lat || !impulse.location_lng) {
+        // Проверяем наличие координат из Supabase (именно null/undefined, а не нулевые координаты)
+        if (impulse.location_lat == null || impulse.location_lng == null) {
           console.warn(`[MapScreen] ⚠️ Impulse ${impulse.id} has no location (lat: ${impulse.location_lat}, lng: ${impulse.location_lng}), skipping`);
           return;
         }
