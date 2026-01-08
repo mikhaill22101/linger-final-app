@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 interface TelegramUser {
+  id?: number;
   first_name?: string;
   username?: string;
   photo_url?: string;
@@ -11,6 +13,7 @@ interface ProfileState {
   username: string;
   photoUrl?: string;
   bio: string;
+  telegramId?: number;
 }
 
 const Profile: React.FC = () => {
@@ -19,31 +22,65 @@ const Profile: React.FC = () => {
     username: '',
     photoUrl: undefined,
     bio: '',
+    telegramId: undefined,
   });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
+  // Загрузка профиля из базы данных
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    const loadProfile = async () => {
+      if (typeof window === 'undefined') return;
 
-    const tgWebApp = (window as any).Telegram?.WebApp;
+      const tgWebApp = (window as any).Telegram?.WebApp;
 
-    try {
-      const user: TelegramUser | undefined = tgWebApp?.initDataUnsafe?.user;
+      try {
+        const user: TelegramUser | undefined = tgWebApp?.initDataUnsafe?.user;
 
-      if (user) {
-        setProfile((prev) => ({
-          ...prev,
-          firstName: user.first_name || prev.firstName,
-          username: user.username || prev.username,
-          photoUrl: user.photo_url || prev.photoUrl,
-        }));
+        if (user) {
+          const telegramId = user.id;
+          
+          // Устанавливаем данные из Telegram
+          setProfile((prev) => ({
+            ...prev,
+            firstName: user.first_name || prev.firstName,
+            username: user.username || prev.username,
+            photoUrl: user.photo_url || prev.photoUrl,
+            telegramId: telegramId,
+          }));
+
+          // Загружаем био из базы данных, если есть telegram_id
+          if (telegramId) {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('bio, full_name')
+              .eq('telegram_id', telegramId)
+              .single();
+
+            if (error && error.code !== 'PGRST116') {
+              // PGRST116 - это "not found", что нормально для нового пользователя
+              console.error('Error loading profile:', error);
+            } else if (data) {
+              setProfile((prev) => ({
+                ...prev,
+                bio: data.bio || '',
+                firstName: data.full_name || prev.firstName,
+              }));
+            }
+          }
+        }
+
+        // Try to expand to full viewport inside Telegram
+        tgWebApp?.ready?.();
+        tgWebApp?.expand?.();
+      } catch (err) {
+        console.error('Failed to read Telegram WebApp user data', err);
+      } finally {
+        setIsLoading(false);
       }
+    };
 
-      // Try to expand to full viewport inside Telegram
-      tgWebApp?.ready?.();
-      tgWebApp?.expand?.();
-    } catch (err) {
-      console.error('Failed to read Telegram WebApp user data', err);
-    }
+    loadProfile();
   }, []);
 
   const handleBioChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -51,18 +88,49 @@ const Profile: React.FC = () => {
     setProfile((prev) => ({ ...prev, bio: value }));
   };
 
-  const handleSave = () => {
-    console.log('Profile saved:', profile);
+  const handleSave = async () => {
+    if (!profile.telegramId) {
+      console.error('Telegram ID is missing');
+      return;
+    }
+
+    setIsSaving(true);
 
     const tgWebApp = (typeof window !== 'undefined'
       ? (window as any).Telegram?.WebApp
       : undefined);
 
-    // Optional: light haptic feedback when available
     try {
-      tgWebApp?.HapticFeedback?.impactOccurred?.('light');
+      // Сохраняем данные в Supabase методом upsert
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert({
+          telegram_id: profile.telegramId,
+          full_name: profile.firstName,
+          bio: profile.bio,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'telegram_id',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error saving profile:', error);
+        // Optional: показать уведомление об ошибке
+      } else {
+        console.log('Profile saved successfully:', data);
+        // Optional: light haptic feedback when available
+        try {
+          tgWebApp?.HapticFeedback?.impactOccurred?.('light');
+        } catch (err) {
+          // Non‑critical, ignore
+        }
+      }
     } catch (err) {
-      // Non‑critical, ignore
+      console.error('Failed to save profile:', err);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -141,15 +209,15 @@ const Profile: React.FC = () => {
             <button
               type="button"
               onClick={handleSave}
-              className="mt-1 w-full rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold tracking-wide text-white shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-transform"
+              disabled={isSaving || isLoading}
+              className="mt-1 w-full rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold tracking-wide text-white shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Save
+              {isSaving ? 'Saving...' : 'Save'}
             </button>
 
             {/* Footnote */}
             <p className="mt-1 text-[10px] text-center text-white/40 leading-snug">
-              Your profile is stored inside Telegram for now. Saving will just log
-              data in the console during development.
+              Your profile is saved to Supabase database.
             </p>
           </div>
         </div>
