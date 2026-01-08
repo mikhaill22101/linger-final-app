@@ -13,15 +13,27 @@ body {
   flex-direction: column;
 }
 
-/* Анимация свечения для маркеров */
-@keyframes glow {
+/* Анимация пульсации для активных маркеров */
+@keyframes pulsate {
   0%, 100% {
-    box-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor;
+    box-shadow: 0 0 8px currentColor, 0 0 16px currentColor, 0 0 24px currentColor;
     transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor, 0 0 40px currentColor;
-    transform: scale(1.15);
+    box-shadow: 0 0 16px currentColor, 0 0 32px currentColor, 0 0 48px currentColor, 0 0 64px currentColor;
+    transform: scale(1.2);
+  }
+}
+
+/* Анимация свечения для неактивных маркеров */
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 5px currentColor, 0 0 10px currentColor;
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 8px currentColor, 0 0 16px currentColor;
+    transform: scale(1.05);
   }
 }
 
@@ -32,12 +44,14 @@ body {
 }
 
 .custom-marker > div {
-  animation: glow 2s ease-in-out infinite;
+  animation: glow 3s ease-in-out infinite;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
   cursor: pointer;
+  will-change: transform, box-shadow;
 }
 
 .custom-marker.marker-active > div {
-  animation: glow 1.5s ease-in-out infinite;
+  animation: pulsate 1.5s ease-in-out infinite;
   z-index: 1000;
+  transform: scale(1.2);
 }

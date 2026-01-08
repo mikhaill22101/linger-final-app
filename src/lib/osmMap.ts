@@ -6,8 +6,9 @@ import { categoryColors } from './categoryColors';
 
 // Функция для создания кастомной иконки маркера с цветом и анимацией
 function createMarkerIcon(color: string, isActive: boolean, size: number = 20): DivIcon {
-  const baseSize = isActive ? size * 1.2 : size;
-  const shadowSize = isActive ? 25 : 12;
+  const baseSize = size;
+  // Для активных маркеров используем CSS анимацию, размер контролируется через transform
+  const shadowSize = isActive ? 20 : 10;
   
   return L.divIcon({
     className: `custom-marker ${isActive ? 'marker-active' : ''}`,
@@ -21,6 +22,7 @@ function createMarkerIcon(color: string, isActive: boolean, size: number = 20): 
         box-shadow: 0 0 ${shadowSize}px ${color}, 0 0 ${shadowSize * 1.5}px ${color};
         transition: transform 0.3s ease, box-shadow 0.3s ease;
         position: relative;
+        color: ${color};
       "></div>
     `,
     iconSize: [baseSize, baseSize],

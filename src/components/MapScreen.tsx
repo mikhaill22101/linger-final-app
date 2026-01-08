@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import WebApp from '@twa-dev/sdk';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
@@ -112,6 +112,15 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [impulses, setImpulses] = useState<ImpulseLocation[]>([]);
 
+  // Используем useLayoutEffect для гарантии, что DOM готов
+  useLayoutEffect(() => {
+    // Проверяем, что ref привязан к DOM
+    if (!mapRef.current) {
+      console.warn('mapRef.current is null, waiting for DOM...');
+      return;
+    }
+  }, []);
+
   useEffect(() => {
     try {
       WebApp.ready();
@@ -132,13 +141,21 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
           console.warn(`getMapProvider вернул ${testProvider}, ожидался 'osm'`);
         }
         
+        // Ждем, пока ref будет привязан к DOM
+        let retries = 0;
+        const maxRetries = 10;
+        while (!mapRef.current && retries < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          retries++;
+        }
+
+        if (!mapRef.current) {
+          throw new Error('mapRef.current is null - контейнер карты не найден после ожидания');
+        }
+
         try {
           const userLocation = await getUserLocation();
           const center: GeoLocation = userLocation ?? { lat: 55.7558, lng: 37.6173 };
-
-          if (!mapRef.current) {
-            throw new Error('mapRef.current is null - контейнер карты не найден');
-          }
 
           const map = await osmMapAdapter.initMap(mapRef.current, center);
           if (cancelled) {
@@ -205,6 +222,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
   // Обновляем маркеры при изменении активной категории
   useEffect(() => {
     if (mapInstanceRef.current && impulses.length > 0) {
+      console.log('Updating markers with active category:', activeCategory);
       mapInstanceRef.current.setMarkers(impulses, (impulse) => {
         setSelectedImpulse(impulse);
         // Вибрация при клике на маркер

@@ -168,7 +168,19 @@ function App() {
 
   const handleTabChange = (tab: 'home' | 'profile' | 'map') => {
     setActiveTab(tab);
-    WebApp.HapticFeedback.impactOccurred('light');
+    // Вибрация при переключении вкладок
+    if (WebApp.HapticFeedback) {
+      try {
+        WebApp.HapticFeedback.impactOccurred('light');
+      } catch (e) {
+        console.warn('Haptic feedback error:', e);
+      }
+    }
+    // При переключении на карту, если есть активная категория, она уже передана через props
+    // При переключении на другую вкладку, можно сбросить активную категорию
+    if (tab !== 'map') {
+      setActiveCategory(null);
+    }
   };
 
   const handleCloseModal = () => {
