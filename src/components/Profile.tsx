@@ -54,7 +54,7 @@ const Profile: React.FC = () => {
             const { data, error } = await supabase
               .from('profiles')
               .select('bio, full_name')
-              .eq('telegram_id', telegramId)
+              .eq('id', telegramId)
               .single();
 
             if (error && error.code !== 'PGRST116') {
@@ -102,15 +102,16 @@ const Profile: React.FC = () => {
 
     try {
       // Сохраняем данные в Supabase методом upsert
+      // id должен быть bigint из Telegram user.id
       const { data, error } = await supabase
         .from('profiles')
         .upsert({
-          telegram_id: profile.telegramId,
+          id: profile.telegramId, // bigint из Telegram user.id
           full_name: profile.firstName,
           bio: profile.bio,
           updated_at: new Date().toISOString(),
         }, {
-          onConflict: 'telegram_id',
+          onConflict: 'id', // Конфликт по полю id
         })
         .select()
         .single();
