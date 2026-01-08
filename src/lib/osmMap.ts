@@ -106,6 +106,10 @@ export const osmMapAdapter: MapAdapter = {
         }
         return null;
       },
+      invalidateSize() {
+        // Принудительный пересчет размеров карты Leaflet
+        map.invalidateSize();
+      },
     };
 
     return instance;

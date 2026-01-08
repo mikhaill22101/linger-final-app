@@ -22,8 +22,9 @@ export interface MapInstance {
   setActiveCategory?: (category: string | null) => void;
   flyTo: (location: GeoLocation, zoom?: number) => void;
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
+  invalidateSize?: () => void;
 }
 
 export interface MapAdapter {
-  initMap: (container: HTMLDivElement, center: GeoLocation) => Promise<MapInstance>;
+  initMap: (container: HTMLDivElement, center: GeoLocation, zoom?: number) => Promise<MapInstance>;
 }
