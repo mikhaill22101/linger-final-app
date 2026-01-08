@@ -97,12 +97,15 @@ const categories = [
   }
 ];
 
+import { categoryColors } from './lib/categoryColors';
+
 function App() {
   console.log('App started');
   
   const [activeTab, setActiveTab] = useState<'home' | 'profile' | 'map'>('home');
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [messageContent, setMessageContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feed, setFeed] = useState<Impulse[]>([]);
@@ -145,7 +148,22 @@ function App() {
     setSelectedCategory(id);
     setModalOpen(true);
     setMessageContent('');
-    WebApp.HapticFeedback.impactOccurred('light');
+    
+    // Устанавливаем активную категорию для подсветки маркеров на карте
+    const category = categories.find(cat => cat.id === id);
+    if (category) {
+      const categoryName = isRussian ? category.label.ru : category.label.en;
+      setActiveCategory(categoryName);
+    }
+    
+    // Вибрация при клике на категорию
+    if (WebApp.HapticFeedback) {
+      try {
+        WebApp.HapticFeedback.impactOccurred('medium');
+      } catch (e) {
+        console.warn('Haptic feedback error:', e);
+      }
+    }
   };
 
   const handleTabChange = (tab: 'home' | 'profile' | 'map') => {
@@ -157,6 +175,8 @@ function App() {
     setModalOpen(false);
     setSelectedCategory(null);
     setMessageContent('');
+    // Сбрасываем активную категорию при закрытии модального окна
+    setActiveCategory(null);
   };
 
   const getCurrentLocation = (): Promise<{ lat: number; lng: number } | null> => {
@@ -358,7 +378,7 @@ function App() {
         ) : activeTab === 'profile' ? (
           <Profile />
         ) : (
-          <MapScreen />
+          <MapScreen activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
         )}
       </div>
 

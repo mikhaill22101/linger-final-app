@@ -16,7 +16,8 @@ export interface ImpulseLocation {
 
 export interface MapInstance {
   destroy: () => void;
-  setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void) => void;
+  setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void, activeCategory?: string | null) => void;
+  setActiveCategory?: (category: string | null) => void;
 }
 
 export interface MapAdapter {

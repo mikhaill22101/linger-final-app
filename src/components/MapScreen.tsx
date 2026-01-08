@@ -99,12 +99,18 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
   }
 }
 
-const MapScreen: React.FC = () => {
+interface MapScreenProps {
+  activeCategory?: string | null;
+  onCategoryChange?: (category: string | null) => void;
+}
+
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
   const [selectedImpulse, setSelectedImpulse] = useState<ImpulseLocation | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [impulses, setImpulses] = useState<ImpulseLocation[]>([]);
 
   useEffect(() => {
     try {
@@ -141,16 +147,22 @@ const MapScreen: React.FC = () => {
           }
           mapInstanceRef.current = map;
 
-          const impulses = await loadImpulses();
-          if (!cancelled && impulses.length > 0) {
-            map.setMarkers(impulses, (impulse) => {
-              setSelectedImpulse(impulse);
-              try {
-                WebApp.HapticFeedback?.impactOccurred('light');
-              } catch {
-                // ignore
-              }
-            });
+          const loadedImpulses = await loadImpulses();
+          if (!cancelled) {
+            setImpulses(loadedImpulses);
+            if (loadedImpulses.length > 0) {
+              map.setMarkers(loadedImpulses, (impulse) => {
+                setSelectedImpulse(impulse);
+                // Вибрация при клике на маркер
+                if (WebApp.HapticFeedback) {
+                  try {
+                    WebApp.HapticFeedback.impactOccurred('medium');
+                  } catch (e) {
+                    console.warn('Haptic feedback error:', e);
+                  }
+                }
+              }, activeCategory || null);
+            }
           }
 
           if (!cancelled) {
@@ -189,6 +201,23 @@ const MapScreen: React.FC = () => {
       }
     };
   }, []);
+
+  // Обновляем маркеры при изменении активной категории
+  useEffect(() => {
+    if (mapInstanceRef.current && impulses.length > 0) {
+      mapInstanceRef.current.setMarkers(impulses, (impulse) => {
+        setSelectedImpulse(impulse);
+        // Вибрация при клике на маркер
+        if (WebApp.HapticFeedback) {
+          try {
+            WebApp.HapticFeedback.impactOccurred('medium');
+          } catch (e) {
+            console.warn('Haptic feedback error:', e);
+          }
+        }
+      }, activeCategory || null);
+    }
+  }, [activeCategory, impulses]);
 
   const hideBalloon = () => {
     setSelectedImpulse(null);

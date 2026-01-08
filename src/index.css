@@ -12,3 +12,32 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+/* Анимация свечения для маркеров */
+@keyframes glow {
+  0%, 100% {
+    box-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor;
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor, 0 0 40px currentColor;
+    transform: scale(1.15);
+  }
+}
+
+/* Стили для кастомных маркеров Leaflet */
+.custom-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.custom-marker > div {
+  animation: glow 2s ease-in-out infinite;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  cursor: pointer;
+}
+
+.custom-marker.marker-active > div {
+  animation: glow 1.5s ease-in-out infinite;
+  z-index: 1000;
+}
