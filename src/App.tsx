@@ -1,7 +1,8 @@
 import WebApp from '@twa-dev/sdk'; 
 import { useState, useEffect } from 'react';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, ChevronDown } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, ChevronDown, Home, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Profile from './components/Profile';
 // Определяем категории с их цветами и описаниями
 const categories = [
   { 
@@ -84,6 +85,9 @@ const categories = [
 ];
 
 function App() {
+  const [activeTab, setActiveTab] = useState<'home' | 'profile'>('home');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   useEffect(() => {
     WebApp.ready();
     WebApp.expand(); // Развернет приложение на весь экран в Telegram
@@ -94,92 +98,134 @@ function App() {
     // Добавляем легкую вибрацию при клике
     WebApp.HapticFeedback.impactOccurred('light');
   };
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const handleTabChange = (tab: 'home' | 'profile') => {
+    setActiveTab(tab);
+    // Добавляем легкую вибрацию при переключении таба
+    WebApp.HapticFeedback.impactOccurred('light');
+  };
   
   // Определяем язык (по умолчанию русский, если в Telegram стоит 'ru')
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20">
-      {/* Шапка */}
-      <header className="pt-16 pb-8 px-6 text-center">
-        <motion.h1 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-5xl font-light tracking-[0.2em] mb-2"
-        >
-          LINGER
-        </motion.h1>
-        <motion.p 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="text-gray-500 uppercase tracking-widest text-[10px]"
-        >
-          Meet the Moment
-        </motion.p>
-      </header>
-
-      {/* Список категорий */}
-      <main className="px-4 pb-12 space-y-4">
-        {categories.map((cat) => (
-          <div key={cat.id} className="relative overflow-visible">
-            {/* Эффект свечения сзади активной кнопки */}
-            <AnimatePresence>
-              {expandedId === cat.id && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className={`glow-effect bg-gradient-to-r ${cat.color}`}
-                />
-              )}
-            </AnimatePresence>
-
-            <motion.button
-              onClick={() => handleCategoryClick(cat.id)}
-              className={`relative w-full p-5 rounded-2xl flex items-center justify-between border transition-all duration-500 ${
-                expandedId === cat.id 
-                ? `bg-black/40 ${cat.border} shadow-2xl` 
-                : 'bg-white/5 border-white/10'
-              } backdrop-blur-xl z-10`}
-            >
-              <div className="flex items-center gap-4">
-                <cat.icon size={22} className={expandedId === cat.id ? 'text-white' : 'text-gray-400'} />
-                <span className="text-lg font-light tracking-wide">
-                  {isRussian ? cat.label.ru : cat.label.en}
-                </span>
-              </div>
-              <motion.div
-                animate={{ rotate: expandedId === cat.id ? 180 : 0 }}
-                transition={{ duration: 0.3 }}
+    <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
+      {/* Контент */}
+      <div className="flex-1 pb-20">
+        {activeTab === 'home' ? (
+          <>
+            {/* Шапка */}
+            <header className="pt-16 pb-8 px-6 text-center">
+              <motion.h1 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-5xl font-light tracking-[0.2em] mb-2"
               >
-                <ChevronDown size={20} className="text-gray-500" />
-              </motion.div>
-            </motion.button>
+                LINGER
+              </motion.h1>
+              <motion.p 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="text-gray-500 uppercase tracking-widest text-[10px]"
+              >
+                Meet the Moment
+              </motion.p>
+            </header>
 
-            <AnimatePresence>
-              {expandedId === cat.id && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="relative z-10 bg-black/20 mx-2 rounded-b-2xl border-x border-b border-white/5 backdrop-blur-md"
-                >
-                  <div className="p-6 text-gray-300 font-light leading-relaxed">
-                    {isRussian ? cat.text.ru : cat.text.en}
-                    <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
-                      <button className="text-xs uppercase tracking-widest text-white/40 hover:text-white transition-colors">
-                        Explore →
-                      </button>
+            {/* Список категорий */}
+            <main className="px-4 pb-12 space-y-4">
+              {categories.map((cat) => (
+                <div key={cat.id} className="relative overflow-visible">
+                  {/* Эффект свечения сзади активной кнопки */}
+                  <AnimatePresence>
+                    {expandedId === cat.id && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className={`glow-effect bg-gradient-to-r ${cat.color}`}
+                      />
+                    )}
+                  </AnimatePresence>
+
+                  <motion.button
+                    onClick={() => handleCategoryClick(cat.id)}
+                    className={`relative w-full p-5 rounded-2xl flex items-center justify-between border transition-all duration-500 ${
+                      expandedId === cat.id 
+                      ? `bg-black/40 ${cat.border} shadow-2xl` 
+                      : 'bg-white/5 border-white/10'
+                    } backdrop-blur-xl z-10`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <cat.icon size={22} className={expandedId === cat.id ? 'text-white' : 'text-gray-400'} />
+                      <span className="text-lg font-light tracking-wide">
+                        {isRussian ? cat.label.ru : cat.label.en}
+                      </span>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        ))}
-      </main>
+                    <motion.div
+                      animate={{ rotate: expandedId === cat.id ? 180 : 0 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <ChevronDown size={20} className="text-gray-500" />
+                    </motion.div>
+                  </motion.button>
+
+                  <AnimatePresence>
+                    {expandedId === cat.id && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="relative z-10 bg-black/20 mx-2 rounded-b-2xl border-x border-b border-white/5 backdrop-blur-md"
+                      >
+                        <div className="p-6 text-gray-300 font-light leading-relaxed">
+                          {isRussian ? cat.text.ru : cat.text.en}
+                          <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
+                            <button className="text-xs uppercase tracking-widest text-white/40 hover:text-white transition-colors">
+                              Explore →
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              ))}
+            </main>
+          </>
+        ) : (
+          <Profile />
+        )}
+      </div>
+
+      {/* Нижняя панель навигации */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 z-50">
+        <div className="flex items-center justify-around h-16 px-4">
+          <button
+            onClick={() => handleTabChange('home')}
+            className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+              activeTab === 'home' ? 'text-white' : 'text-white/50'
+            }`}
+          >
+            <Home size={22} className={activeTab === 'home' ? 'text-white' : 'text-white/50'} />
+            <span className="text-xs font-light">
+              {isRussian ? 'Главная' : 'Home'}
+            </span>
+          </button>
+          <button
+            onClick={() => handleTabChange('profile')}
+            className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+              activeTab === 'profile' ? 'text-white' : 'text-white/50'
+            }`}
+          >
+            <User size={22} className={activeTab === 'profile' ? 'text-white' : 'text-white/50'} />
+            <span className="text-xs font-light">
+              {isRussian ? 'Профиль' : 'Profile'}
+            </span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
