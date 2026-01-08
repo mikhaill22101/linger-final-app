@@ -14,7 +14,7 @@ interface ImpulseRow {
   location_lng: number | null;
 }
 
-type MapStatus = 'loading' | 'ready' | 'error' | 'retry';
+type MapStatus = 'loading' | 'ready' | 'error';
 
 // Резервная локация: Озеро Разлив, Сестрорецк
 const DEFAULT_LOCATION: GeoLocation = {
@@ -34,7 +34,6 @@ function getUserLocation(): Promise<GeoLocation> {
       }
     }, 3000);
 
-    // Пробуем через navigator.geolocation
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -53,7 +52,6 @@ function getUserLocation(): Promise<GeoLocation> {
             resolved = true;
             clearTimeout(timeout);
             console.warn('[getUserLocation] Ошибка геопозиции:', error);
-            console.log('[getUserLocation] Используем резервную локацию:', DEFAULT_LOCATION);
             resolve(DEFAULT_LOCATION);
           }
         },
@@ -63,7 +61,6 @@ function getUserLocation(): Promise<GeoLocation> {
       clearTimeout(timeout);
       if (!resolved) {
         resolved = true;
-        console.warn('[getUserLocation] Геолокация недоступна, используем резервную локацию');
         resolve(DEFAULT_LOCATION);
       }
     }
@@ -177,7 +174,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
       location_lat: row.location_lat as number,
       location_lng: row.location_lng as number,
       created_at: row.created_at,
-      address: undefined, // Адрес загрузится при клике
+      address: undefined,
     }));
 
     console.log(`[loadImpulses] Возвращаем ${impulses.length} импульсов (без адресов)`);
@@ -221,120 +218,127 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
     };
   }, [status]);
 
-  // Инициализация карты через useEffect с setTimeout для гарантии отрисовки DOM
+  // ГАРАНТИРОВАННАЯ ИНИЦИАЛИЗАЦИЯ: только useEffect с requestAnimationFrame
   useEffect(() => {
     if (initAttemptedRef.current) {
       return;
     }
 
-    // Даем браузеру время отрисовать div для карты
-    const timeoutId = setTimeout(() => {
-      const initMap = async () => {
-        // КРИТИЧЕСКАЯ ПРОВЕРКА: контейнер должен существовать
-        if (!mapRef.current) {
-          console.warn('[MapScreen] mapRef.current is null после setTimeout');
-          setStatus('error');
-          setErrorMessage('Контейнер карты не найден');
-          return;
-        }
-
-        initAttemptedRef.current = true;
-
-        try {
-          console.log('[MapScreen] Начало инициализации карты...');
-          
-          // Получаем геопозицию (максимум 3 секунды)
-          const userLocation = await getUserLocation();
-          const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
-          const zoom = isDefaultLocation ? 13 : 15;
-
-          console.log('[MapScreen] Создание карты:', userLocation, 'zoom:', zoom);
-          
+    // Используем requestAnimationFrame для гарантии отрисовки DOM
+    requestAnimationFrame(() => {
+      // Дополнительный setTimeout для Telegram Mini App
+      setTimeout(() => {
+        const initMap = async () => {
+          // КРИТИЧЕСКАЯ ПРОВЕРКА: контейнер должен существовать
           if (!mapRef.current) {
-            throw new Error('mapRef.current is null перед инициализацией');
+            console.error('[MapScreen] mapRef.current is null после ожидания');
+            setStatus('error');
+            setErrorMessage('Контейнер карты не найден');
+            return;
           }
 
-          // Инициализируем карту
-          const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
-          mapInstanceRef.current = map;
+          initAttemptedRef.current = true;
 
-          // Принудительный Resize для Leaflet (после инициализации)
-          if (mapInstanceRef.current.invalidateSize) {
-            mapInstanceRef.current.invalidateSize();
-          }
+          try {
+            console.log('[MapScreen] Начало инициализации карты...');
+            
+            // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
+            const userLocation = await getUserLocation();
+            const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
+            const zoom = isDefaultLocation ? 13 : 15;
 
-          // Плавное перемещение к локации
-          if (isDefaultLocation) {
-            map.flyTo(userLocation, zoom);
-          }
+            console.log('[MapScreen] Создание карты:', userLocation, 'zoom:', zoom);
+            
+            if (!mapRef.current) {
+              throw new Error('mapRef.current is null перед инициализацией');
+            }
 
-          // Загружаем данные из Supabase после отрисовки карты
-          console.log('[MapScreen] Загрузка импульсов из Supabase...');
-          const loadedImpulses = await loadImpulses();
-          setImpulses(loadedImpulses);
-          
-          console.log(`[MapScreen] Загружено ${loadedImpulses.length} импульсов`);
-          
-          // Отображаем маркеры БЫСТРО (без адресов)
-          if (loadedImpulses.length > 0) {
-            map.setMarkers(loadedImpulses, async (impulse) => {
-              // Загружаем адрес при клике, если его еще нет
-              let impulseWithAddress = impulse;
-              if (!impulse.address) {
-                const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
-                if (!addressCacheRef.current.has(cacheKey)) {
-                  const address = await getAddress(impulse.location_lat, impulse.location_lng);
-                  addressCacheRef.current.set(cacheKey, address);
-                  impulseWithAddress = { ...impulse, address };
-                  // Обновляем импульс в списке
-                  setImpulses(prev => prev.map(i => 
-                    i.id === impulse.id ? impulseWithAddress : i
-                  ));
-                } else {
-                  impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
+            // Инициализируем карту
+            const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
+            mapInstanceRef.current = map;
+
+            // ПРИНУДИТЕЛЬНЫЙ Resize для Leaflet (сразу после создания)
+            if (mapInstanceRef.current.invalidateSize) {
+              mapInstanceRef.current.invalidateSize();
+              // Дополнительный вызов через небольшой таймаут для надежности
+              setTimeout(() => {
+                if (mapInstanceRef.current?.invalidateSize) {
+                  mapInstanceRef.current.invalidateSize();
                 }
-              }
-              
-              setSelectedImpulse(impulseWithAddress);
-              
-              // Вибрация при клике на маркер
-              if (window.Telegram?.WebApp?.HapticFeedback) {
-                try {
-                  window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                } catch (e) {
-                  console.warn('[MapScreen] Haptic error:', e);
+              }, 100);
+            }
+
+            // Плавное перемещение к локации (только для резервной локации)
+            if (isDefaultLocation) {
+              setTimeout(() => {
+                map.flyTo(userLocation, zoom);
+              }, 200);
+            }
+
+            // Загружаем данные из Supabase после отрисовки карты
+            console.log('[MapScreen] Загрузка импульсов из Supabase...');
+            const loadedImpulses = await loadImpulses();
+            setImpulses(loadedImpulses);
+            
+            console.log(`[MapScreen] Загружено ${loadedImpulses.length} импульсов`);
+            
+            // Отображаем маркеры БЫСТРО (без адресов)
+            if (loadedImpulses.length > 0) {
+              map.setMarkers(loadedImpulses, async (impulse) => {
+                // Загружаем адрес при клике, если его еще нет
+                let impulseWithAddress = impulse;
+                if (!impulse.address) {
+                  const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
+                  if (!addressCacheRef.current.has(cacheKey)) {
+                    const address = await getAddress(impulse.location_lat, impulse.location_lng);
+                    addressCacheRef.current.set(cacheKey, address);
+                    impulseWithAddress = { ...impulse, address };
+                    // Обновляем импульс в списке
+                    setImpulses(prev => prev.map(i => 
+                      i.id === impulse.id ? impulseWithAddress : i
+                    ));
+                  } else {
+                    impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
+                  }
                 }
-              }
-            }, activeCategory || null);
-          }
+                
+                setSelectedImpulse(impulseWithAddress);
+                
+                // Вибрация при клике на маркер
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                  try {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                  } catch (e) {
+                    console.warn('[MapScreen] Haptic error:', e);
+                  }
+                }
+              }, activeCategory || null);
+            }
 
-          // Очищаем таймаут и устанавливаем статус ready
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-            loadingTimeoutRef.current = null;
+            // Очищаем таймаут и устанавливаем статус ready
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
+            }
+            setStatus('ready');
+            console.log('[MapScreen] Карта успешно инициализирована');
+          } catch (e) {
+            const error = e instanceof Error ? e : new Error(String(e));
+            console.error('[MapScreen] Ошибка инициализации:', error);
+            
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
+            }
+            
+            setStatus('error');
+            setErrorMessage('Ошибка сети. Нажмите, чтобы попробовать снова');
           }
-          setStatus('ready');
-          console.log('[MapScreen] Карта успешно инициализирована');
-        } catch (e) {
-          const error = e instanceof Error ? e : new Error(String(e));
-          console.error('[MapScreen] Ошибка инициализации:', error);
-          
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-            loadingTimeoutRef.current = null;
-          }
-          
-          setStatus('error');
-          setErrorMessage('Ошибка сети. Нажмите, чтобы попробовать снова');
-        }
-      };
+        };
 
-      initMap();
-    }, 100); // Даем браузеру 100ms на отрисовку DOM
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
+        initMap();
+      }, 150); // Дополнительная задержка для Telegram Mini App
+    });
   }, []);
 
   // Обновляем маркеры при изменении активной категории
@@ -359,6 +363,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
         
         setSelectedImpulse(impulseWithAddress);
         
+        // Вибрация при клике на маркер
         if (window.Telegram?.WebApp?.HapticFeedback) {
           try {
             window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
@@ -395,66 +400,75 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
     addressCacheRef.current.clear();
     
     // Перезапускаем инициализацию
-    setTimeout(() => {
-      if (mapRef.current) {
-        const initMap = async () => {
-          try {
-            const userLocation = await getUserLocation();
-            const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
-            const zoom = isDefaultLocation ? 13 : 15;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (mapRef.current) {
+          const initMap = async () => {
+            try {
+              const userLocation = await getUserLocation();
+              const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
+              const zoom = isDefaultLocation ? 13 : 15;
 
-            if (mapRef.current) {
-              const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
-              mapInstanceRef.current = map;
+              if (mapRef.current) {
+                const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
+                mapInstanceRef.current = map;
 
-              // Принудительный Resize
-              if (mapInstanceRef.current.invalidateSize) {
-                mapInstanceRef.current.invalidateSize();
-              }
-
-              if (isDefaultLocation) {
-                map.flyTo(userLocation, zoom);
-              }
-
-              const loadedImpulses = await loadImpulses();
-              setImpulses(loadedImpulses);
-              
-              if (loadedImpulses.length > 0) {
-                map.setMarkers(loadedImpulses, async (impulse) => {
-                  let impulseWithAddress = impulse;
-                  if (!impulse.address) {
-                    const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
-                    if (!addressCacheRef.current.has(cacheKey)) {
-                      const address = await getAddress(impulse.location_lat, impulse.location_lng);
-                      addressCacheRef.current.set(cacheKey, address);
-                      impulseWithAddress = { ...impulse, address };
-                      setImpulses(prev => prev.map(i => 
-                        i.id === impulse.id ? impulseWithAddress : i
-                      ));
-                    } else {
-                      impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
+                // Принудительный Resize
+                if (mapInstanceRef.current.invalidateSize) {
+                  mapInstanceRef.current.invalidateSize();
+                  setTimeout(() => {
+                    if (mapInstanceRef.current?.invalidateSize) {
+                      mapInstanceRef.current.invalidateSize();
                     }
-                  }
-                  
-                  setSelectedImpulse(impulseWithAddress);
-                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                    try {
-                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                    } catch (e) {}
-                  }
-                }, activeCategory || null);
-              }
+                  }, 100);
+                }
 
-              setStatus('ready');
+                if (isDefaultLocation) {
+                  setTimeout(() => {
+                    map.flyTo(userLocation, zoom);
+                  }, 200);
+                }
+
+                const loadedImpulses = await loadImpulses();
+                setImpulses(loadedImpulses);
+                
+                if (loadedImpulses.length > 0) {
+                  map.setMarkers(loadedImpulses, async (impulse) => {
+                    let impulseWithAddress = impulse;
+                    if (!impulse.address) {
+                      const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
+                      if (!addressCacheRef.current.has(cacheKey)) {
+                        const address = await getAddress(impulse.location_lat, impulse.location_lng);
+                        addressCacheRef.current.set(cacheKey, address);
+                        impulseWithAddress = { ...impulse, address };
+                        setImpulses(prev => prev.map(i => 
+                          i.id === impulse.id ? impulseWithAddress : i
+                        ));
+                      } else {
+                        impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
+                      }
+                    }
+                    
+                    setSelectedImpulse(impulseWithAddress);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {}
+                    }
+                  }, activeCategory || null);
+                }
+
+                setStatus('ready');
+              }
+            } catch (e) {
+              setStatus('error');
+              setErrorMessage('Ошибка сети. Нажмите, чтобы попробовать снова');
             }
-          } catch (e) {
-            setStatus('error');
-            setErrorMessage('Ошибка сети. Нажмите, чтобы попробовать снова');
-          }
-        };
-        initMap();
-      }
-    }, 100);
+          };
+          initMap();
+        }
+      }, 150);
+    });
   };
 
   const hideBalloon = () => {
@@ -468,6 +482,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
         15
       );
       
+      // Вибрация
       if (window.Telegram?.WebApp?.HapticFeedback) {
         try {
           window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
@@ -476,46 +491,50 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
     }
   };
 
-  if (status === 'loading') {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-white/60 mb-2">Загрузка карты...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center p-4">
-        <div className="text-center max-w-md">
-          <div className="text-red-500 text-xl mb-4">⚠️ Ошибка загрузки</div>
-          <div className="text-white/80 text-sm mb-4 break-words">{errorMessage || 'Неизвестная ошибка'}</div>
-          <button
-            onClick={handleRetry}
-            className="px-6 py-3 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white font-semibold rounded-xl hover:opacity-90 transition-opacity"
-          >
-            Попробовать снова
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+  // КОНТЕЙНЕР КАРТЫ ВСЕГДА В DOM (просто скрыт во время загрузки)
   return (
     <div className="relative w-full h-screen bg-black">
-      {/* Контейнер карты с критически важными стилями */}
+      {/* Контейнер карты ВСЕГДА в DOM, скрыт во время загрузки */}
       <div 
         id="map" 
         ref={mapRef} 
         className="map-container"
+        style={{
+          opacity: status === 'ready' ? 1 : 0,
+          visibility: status === 'ready' ? 'visible' : 'hidden',
+          transition: 'opacity 0.3s ease-in-out',
+        }}
       />
       
-      {/* Баллун с детальной информацией */}
+      {/* Индикатор загрузки */}
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-50">
+          <div className="text-center">
+            <div className="text-white/60 mb-2">Загрузка карты...</div>
+          </div>
+        </div>
+      )}
+
+      {/* Экран ошибки */}
+      {status === 'error' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-50 p-4">
+          <div className="text-center max-w-md">
+            <div className="text-red-500 text-xl mb-4">⚠️ Ошибка загрузки</div>
+            <div className="text-white/80 text-sm mb-4 break-words">{errorMessage || 'Неизвестная ошибка'}</div>
+            <button
+              onClick={handleRetry}
+              className="px-6 py-3 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white font-semibold rounded-xl hover:opacity-90 transition-opacity"
+            >
+              Попробовать снова
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Баллун с детальной информацией об импульсе */}
       <AnimatePresence>
-        {selectedImpulse && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 z-50">
+        {selectedImpulse && status === 'ready' && (
+          <div className="absolute bottom-0 left-0 right-0 p-4 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
@@ -572,7 +591,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory }) => {
                 onClick={handleFlyToMarker}
                 className="w-full mt-2 px-4 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
               >
-                📍 Перейти к точке
+                📍 Найти на карте
               </button>
             </motion.div>
           </div>
