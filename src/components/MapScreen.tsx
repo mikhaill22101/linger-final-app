@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
+import { getMapProvider } from '../lib/region';
 
 interface ImpulseRow {
   id: number;
@@ -100,8 +101,12 @@ const MapScreen: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    try {
     WebApp.ready();
     WebApp.expand();
+    } catch (e) {
+      console.error('Error initializing WebApp:', e);
+    }
 
     let cancelled = false;
 
@@ -109,38 +114,51 @@ const MapScreen: React.FC = () => {
       try {
         console.log('Используется бесплатная карта OpenStreetMap');
         
-        const userLocation = await getUserLocation();
-        const center: GeoLocation = userLocation ?? { lat: 55.7558, lng: 37.6173 };
-
-        if (!mapRef.current) {
-          return;
+        // Проверяем, что getMapProvider возвращает 'osm'
+        const testProvider = getMapProvider(null);
+        if (testProvider !== 'osm') {
+          console.warn(`getMapProvider вернул ${testProvider}, ожидался 'osm'`);
         }
+        
+        try {
+          const userLocation = await getUserLocation();
+          const center: GeoLocation = userLocation ?? { lat: 55.7558, lng: 37.6173 };
 
-        const map = await osmMapAdapter.initMap(mapRef.current, center);
-        if (cancelled) {
-          map.destroy();
-          return;
-        }
-        mapInstanceRef.current = map;
+          if (!mapRef.current) {
+            throw new Error('mapRef.current is null - контейнер карты не найден');
+          }
 
-        const impulses = await loadImpulses();
-        if (!cancelled && impulses.length > 0) {
-          map.setMarkers(impulses, (impulse) => {
-            setSelectedImpulse(impulse);
-            try {
-              WebApp.HapticFeedback?.impactOccurred('light');
-            } catch {
-              // ignore
-            }
-          });
-        }
+          const map = await osmMapAdapter.initMap(mapRef.current, center);
+          if (cancelled) {
+            map.destroy();
+            return;
+          }
+          mapInstanceRef.current = map;
 
-        if (!cancelled) {
-          setStatus('ready');
+          const impulses = await loadImpulses();
+          if (!cancelled && impulses.length > 0) {
+            map.setMarkers(impulses, (impulse) => {
+              setSelectedImpulse(impulse);
+              try {
+                WebApp.HapticFeedback?.impactOccurred('light');
+              } catch {
+                // ignore
+              }
+            });
+          }
+
+          if (!cancelled) {
+            setStatus('ready');
+          }
+        } catch (e) {
+          console.error('Error in map initialization:', e);
+          throw e; // Пробрасываем дальше для общего обработчика
         }
       } catch (e) {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : 'Не удалось инициализировать карту';
+        const error = e instanceof Error ? e : new Error(String(e));
+        const msg = error.message || 'Не удалось инициализировать карту';
+        console.error('MapScreen initialization error:', error);
         setErrorMessage(msg);
         setStatus('error');
         try {
@@ -156,7 +174,11 @@ const MapScreen: React.FC = () => {
     return () => {
       cancelled = true;
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.destroy();
+        try {
+          mapInstanceRef.current.destroy();
+        } catch (e) {
+          console.error('Error destroying map:', e);
+        }
         mapInstanceRef.current = null;
       }
     };
@@ -176,16 +198,22 @@ const MapScreen: React.FC = () => {
     );
   }
 
+  if (status === 'error') {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center p-4">
+        <div className="text-center max-w-md">
+          <div className="text-red-500 text-xl mb-4">⚠️ Ошибка загрузки карты</div>
+          <div className="text-white/80 text-sm mb-4 break-words">{errorMessage || 'Неизвестная ошибка'}</div>
+          <div className="text-white/40 text-xs">Проверьте консоль браузера для деталей</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-full h-screen bg-black">
       <div id="map" ref={mapRef} style={{ width: '100%', height: '100vh' }} />
-
-      {status === 'error' && errorMessage && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/80 text-xs px-3 py-2 rounded-full z-40">
-          {errorMessage}
-        </div>
-      )}
-
+      
       {/* Баллун с информацией об импульсе */}
       <AnimatePresence>
         {selectedImpulse && (

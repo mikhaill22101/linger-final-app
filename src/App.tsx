@@ -98,6 +98,8 @@ const categories = [
 ];
 
 function App() {
+  console.log('App started');
+  
   const [activeTab, setActiveTab] = useState<'home' | 'profile' | 'map'>('home');
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -109,9 +111,13 @@ function App() {
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
   useEffect(() => {
-    WebApp.ready();
-    WebApp.expand();
-    loadFeed();
+    try {
+      WebApp.ready();
+      WebApp.expand();
+      loadFeed();
+    } catch (e) {
+      console.error('Error in App useEffect:', e);
+    }
   }, []);
 
   const loadFeed = async () => {
