@@ -81,6 +81,9 @@ interface TelegramWebApp {
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
     selectionChanged: () => void;
   };
+  LocationManager?: {
+    requestLocation: (callback: (location: { latitude: number; longitude: number } | null) => void) => void;
+  };
   CloudStorage: {
     setItem: (key: string, value: string, callback?: (error: Error | null, success: boolean) => void) => void;
     getItem: (key: string, callback: (error: Error | null, value: string | null) => void) => void;

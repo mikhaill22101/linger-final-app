@@ -1,4 +1,4 @@
-import L, { Map as LeafletMap, Marker as LeafletMarker, Icon, DivIcon } from 'leaflet';
+import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon } from 'leaflet';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
 import { categoryColors } from './categoryColors';
 
@@ -7,7 +7,6 @@ import { categoryColors } from './categoryColors';
 // Функция для создания кастомной иконки маркера с цветом и анимацией
 function createMarkerIcon(color: string, isActive: boolean, size: number = 20): DivIcon {
   const baseSize = size;
-  // Для активных маркеров используем CSS анимацию markerGlow
   const shadowSize = isActive ? 20 : 10;
   const activeClass = isActive ? 'marker-active glowing-marker' : '';
   
@@ -32,8 +31,8 @@ function createMarkerIcon(color: string, isActive: boolean, size: number = 20): 
 }
 
 export const osmMapAdapter: MapAdapter = {
-  async initMap(container: HTMLDivElement, center: GeoLocation): Promise<MapInstance> {
-    const map: LeafletMap = L.map(container).setView([center.lat, center.lng], 13);
+  async initMap(container: HTMLDivElement, center: GeoLocation, zoom: number = 14): Promise<MapInstance> {
+    const map: LeafletMap = L.map(container).setView([center.lat, center.lng], zoom);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
@@ -42,6 +41,8 @@ export const osmMapAdapter: MapAdapter = {
 
     let markers: LeafletMarker[] = [];
     let currentActiveCategory: string | null = null;
+    let currentImpulses: ImpulseLocation[] = [];
+    let currentOnClick: ((impulse: ImpulseLocation) => void) | null = null;
 
     const instance: MapInstance = {
       destroy() {
@@ -50,14 +51,22 @@ export const osmMapAdapter: MapAdapter = {
         map.remove();
       },
       setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null) {
+        // Сохраняем данные для фильтрации
+        currentImpulses = impulses;
+        currentOnClick = onClick;
+        currentActiveCategory = activeCategory || null;
+
+        // Фильтруем импульсы по категории, если выбрана
+        const filteredImpulses = currentActiveCategory
+          ? impulses.filter(impulse => impulse.category === currentActiveCategory)
+          : impulses;
+
         // Удаляем старые маркеры
         markers.forEach((m) => m.remove());
         markers = [];
-        
-        currentActiveCategory = activeCategory || null;
 
         // Создаем новые маркеры с цветами и анимацией
-        impulses.forEach((impulse) => {
+        filteredImpulses.forEach((impulse) => {
           const categoryName = impulse.category;
           const isActive = currentActiveCategory === categoryName;
           const color = categoryColors[categoryName] || '#3498db'; // Цвет по умолчанию
@@ -65,17 +74,31 @@ export const osmMapAdapter: MapAdapter = {
           const icon = createMarkerIcon(color, isActive);
           const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);
           
-          marker.on('click', () => onClick(impulse));
+          marker.on('click', () => {
+            if (currentOnClick) {
+              currentOnClick(impulse);
+            }
+          });
           markers.push(marker);
         });
       },
-      setActiveCategory(category: string | null) {
-        currentActiveCategory = category;
-        // Обновляем все маркеры с новым состоянием активности
-        markers.forEach((marker, index) => {
-          // Находим соответствующий импульс (нужно хранить их отдельно)
-          // Для упрощения, пересоздадим маркеры
+      flyTo(location: GeoLocation, zoom: number = 15) {
+        map.flyTo([location.lat, location.lng], zoom, {
+          duration: 1.0,
+          easeLinearity: 0.25,
         });
+      },
+      getBounds() {
+        const bounds = map.getBounds();
+        if (bounds) {
+          return {
+            north: bounds.getNorth(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            west: bounds.getWest(),
+          };
+        }
+        return null;
       },
     };
 
