@@ -1,8 +1,9 @@
 import WebApp from '@twa-dev/sdk'; 
 import { useState, useEffect } from 'react';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, ChevronDown, Home, User } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
+import { supabase } from './lib/supabase';
 // Определяем категории с их цветами и описаниями
 const categories = [
   { 
@@ -86,7 +87,10 @@ const categories = [
 
 function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'profile'>('home');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [messageContent, setMessageContent] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     WebApp.ready();
@@ -94,7 +98,10 @@ function App() {
   }, []);
   
   const handleCategoryClick = (id: string) => {
-    setExpandedId(expandedId === id ? null : id);
+    // Открываем модальное окно вместо раскрытия подсказки
+    setSelectedCategory(id);
+    setModalOpen(true);
+    setMessageContent('');
     // Добавляем легкую вибрацию при клике
     WebApp.HapticFeedback.impactOccurred('light');
   };
@@ -103,6 +110,63 @@ function App() {
     setActiveTab(tab);
     // Добавляем легкую вибрацию при переключении таба
     WebApp.HapticFeedback.impactOccurred('light');
+  };
+
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setSelectedCategory(null);
+    setMessageContent('');
+  };
+
+  const handleSendMessage = async () => {
+    if (!messageContent.trim() || !selectedCategory) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Получаем ID пользователя из Telegram
+      const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+      
+      if (!userId) {
+        console.error('User ID is missing');
+        WebApp.showAlert('Error: User ID not found');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Находим название категории
+      const category = categories.find(cat => cat.id === selectedCategory);
+      const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
+
+      // Отправляем в таблицу impulses
+      const { data, error } = await supabase
+        .from('impulses')
+        .insert({
+          content: messageContent.trim(),
+          category: categoryName,
+          creator_id: userId,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error sending message:', error);
+        WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
+      } else {
+        console.log('Message sent successfully:', data);
+        // Показываем уведомление об успехе
+        WebApp.showAlert(isRussian ? 'Сообщение успешно отправлено!' : 'Message sent successfully!');
+        // Закрываем модальное окно
+        handleCloseModal();
+      }
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   
   // Определяем язык (по умолчанию русский, если в Telegram стоит 'ru')
@@ -137,59 +201,20 @@ function App() {
             <main className="px-4 pb-12 space-y-4">
               {categories.map((cat) => (
                 <div key={cat.id} className="relative overflow-visible">
-                  {/* Эффект свечения сзади активной кнопки */}
-                  <AnimatePresence>
-                    {expandedId === cat.id && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className={`glow-effect bg-gradient-to-r ${cat.color}`}
-                      />
-                    )}
-                  </AnimatePresence>
-
                   <motion.button
                     onClick={() => handleCategoryClick(cat.id)}
-                    className={`relative w-full p-5 rounded-2xl flex items-center justify-between border transition-all duration-500 ${
-                      expandedId === cat.id 
-                      ? `bg-black/40 ${cat.border} shadow-2xl` 
-                      : 'bg-white/5 border-white/10'
-                    } backdrop-blur-xl z-10`}
+                    className="relative w-full p-5 rounded-2xl flex items-center justify-between border bg-white/5 border-white/10 hover:bg-black/40 hover:border-white/20 transition-all duration-500 backdrop-blur-xl z-10"
                   >
                     <div className="flex items-center gap-4">
-                      <cat.icon size={22} className={expandedId === cat.id ? 'text-white' : 'text-gray-400'} />
+                      <cat.icon size={22} className="text-gray-400" />
                       <span className="text-lg font-light tracking-wide">
                         {isRussian ? cat.label.ru : cat.label.en}
                       </span>
                     </div>
-                    <motion.div
-                      animate={{ rotate: expandedId === cat.id ? 180 : 0 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <ChevronDown size={20} className="text-gray-500" />
-                    </motion.div>
+                    <span className="text-xs text-white/40">
+                      {isRussian ? 'Нажмите' : 'Tap'}
+                    </span>
                   </motion.button>
-
-                  <AnimatePresence>
-                    {expandedId === cat.id && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="relative z-10 bg-black/20 mx-2 rounded-b-2xl border-x border-b border-white/5 backdrop-blur-md"
-                      >
-                        <div className="p-6 text-gray-300 font-light leading-relaxed">
-                          {isRussian ? cat.text.ru : cat.text.en}
-                          <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
-                            <button className="text-xs uppercase tracking-widest text-white/40 hover:text-white transition-colors">
-                              Explore →
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                 </div>
               ))}
             </main>
@@ -199,8 +224,74 @@ function App() {
         )}
       </div>
 
+      {/* Модальное окно для отправки сообщения */}
+      <AnimatePresence>
+        {modalOpen && selectedCategory && (
+          <>
+            {/* Overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handleCloseModal}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            />
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-50 max-w-md mx-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-light text-white">
+                  {(() => {
+                    const category = categories.find(cat => cat.id === selectedCategory);
+                    return category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
+                  })()}
+                </h3>
+                <button
+                  onClick={handleCloseModal}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+
+              <textarea
+                value={messageContent}
+                onChange={(e) => setMessageContent(e.target.value)}
+                placeholder={isRussian ? 'Напишите ваше сообщение...' : 'Write your message...'}
+                className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
+                autoFocus
+              />
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCloseModal}
+                  disabled={isSubmitting}
+                  className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
+                >
+                  {isRussian ? 'Отмена' : 'Cancel'}
+                </button>
+                <button
+                  onClick={handleSendMessage}
+                  disabled={isSubmitting || !messageContent.trim()}
+                  className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting 
+                    ? (isRussian ? 'Отправка...' : 'Sending...') 
+                    : (isRussian ? 'Отправить' : 'Send')
+                  }
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Нижняя панель навигации */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 z-50">
+      <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 z-40">
         <div className="flex items-center justify-around h-16 px-4">
           <button
             onClick={() => handleTabChange('home')}
