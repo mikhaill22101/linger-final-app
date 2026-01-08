@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import WebApp from '@twa-dev/sdk';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
@@ -26,11 +26,14 @@ const DEFAULT_LOCATION: GeoLocation = {
 // Функция получения геопозиции пользователя
 function getUserLocation(): Promise<GeoLocation> {
   return new Promise((resolve) => {
+    let resolved = false;
+
     // Пробуем через Telegram WebApp LocationManager
     if (typeof window !== 'undefined' && window.Telegram?.WebApp?.LocationManager) {
       try {
         window.Telegram.WebApp.LocationManager.requestLocation((location) => {
-          if (location) {
+          if (location && !resolved) {
+            resolved = true;
             console.log('[getUserLocation] Получена геопозиция через Telegram:', location);
             resolve({
               lat: location.latitude,
@@ -39,7 +42,6 @@ function getUserLocation(): Promise<GeoLocation> {
             return;
           }
         });
-        // Если не получилось через Telegram, пробуем navigator
       } catch (e) {
         console.warn('[getUserLocation] Ошибка Telegram LocationManager:', e);
       }
@@ -47,25 +49,43 @@ function getUserLocation(): Promise<GeoLocation> {
 
     // Пробуем через navigator.geolocation
     if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-              (position) => {
-          console.log('[getUserLocation] Получена геопозиция через navigator:', position.coords);
-                resolve({
-                  lat: position.coords.latitude,
-                  lng: position.coords.longitude,
-                });
-              },
-              (error) => {
-          console.warn('[getUserLocation] Ошибка получения геопозиции:', error);
-          console.log('[getUserLocation] Используем резервную локацию:', DEFAULT_LOCATION);
-          resolve(DEFAULT_LOCATION);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          if (!resolved) {
+            resolved = true;
+            console.log('[getUserLocation] Получена геопозиция через navigator:', position.coords);
+            resolve({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            });
+          }
+        },
+        (error) => {
+          if (!resolved) {
+            resolved = true;
+            console.warn('[getUserLocation] Ошибка получения геопозиции:', error);
+            console.log('[getUserLocation] Используем резервную локацию:', DEFAULT_LOCATION);
+            resolve(DEFAULT_LOCATION);
+          }
         },
         { timeout: 5000, maximumAge: 60000, enableHighAccuracy: true }
       );
     } else {
-      console.warn('[getUserLocation] Геолокация недоступна, используем резервную локацию');
-      resolve(DEFAULT_LOCATION);
+      if (!resolved) {
+        resolved = true;
+        console.warn('[getUserLocation] Геолокация недоступна, используем резервную локацию');
+        resolve(DEFAULT_LOCATION);
+      }
     }
+
+    // Таймаут на случай, если ничего не сработало
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.warn('[getUserLocation] Таймаут, используем резервную локацию');
+        resolve(DEFAULT_LOCATION);
+      }
+    }, 6000);
   });
 }
 
@@ -85,18 +105,17 @@ function formatTime(dateString: string): string {
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-// Функция получения адреса по координатам (обратное геокодирование)
+// Функция получения адреса по координатам
 async function getAddress(lat: number, lng: number): Promise<string> {
   try {
-    // Используем Nominatim (OpenStreetMap геокодер)
     const response = await fetch(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
       {
         headers: {
           'User-Agent': 'LingerApp/1.0',
-            },
-          }
-        );
+        },
+      }
+    );
     const data = await response.json();
     if (data.address) {
       const parts = [];
@@ -119,12 +138,12 @@ async function getAddress(lat: number, lng: number): Promise<string> {
 async function loadImpulses(): Promise<ImpulseLocation[]> {
   try {
     console.log('[loadImpulses] Запрос данных из Supabase...');
-      const { data, error } = await supabase
-        .from('impulses')
-        .select('id, content, category, creator_id, created_at, location_lat, location_lng')
+    const { data, error } = await supabase
+      .from('impulses')
+      .select('id, content, category, creator_id, created_at, location_lat, location_lng')
       .order('created_at', { ascending: false });
 
-      if (error) {
+    if (error) {
       console.error('[loadImpulses] Ошибка Supabase:', error);
       return [];
     }
@@ -139,15 +158,14 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
 
     // Фильтруем только записи с валидными координатами
     const withLocation = rows.filter((row) => {
-      const hasValidCoords = 
+      return (
         typeof row.location_lat === 'number' &&
         typeof row.location_lng === 'number' &&
         !isNaN(row.location_lat) &&
         !isNaN(row.location_lng) &&
         row.location_lat >= -90 && row.location_lat <= 90 &&
-        row.location_lng >= -180 && row.location_lng <= 180;
-      
-      return hasValidCoords;
+        row.location_lng >= -180 && row.location_lng <= 180
+      );
     });
 
     console.log(`[loadImpulses] ${withLocation.length} записей с валидными координатами`);
@@ -155,18 +173,18 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
     if (withLocation.length === 0) {
       return [];
     }
-        
-        // Загружаем имена авторов
+
+    // Загружаем имена авторов
     const creatorIds = [...new Set(withLocation.map((r) => r.creator_id))];
     let profilesMap = new Map<number, string>();
 
     if (creatorIds.length > 0) {
       try {
         const { data: profiles, error: profilesError } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .in('id', creatorIds);
-          
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', creatorIds);
+
         if (!profilesError && profiles) {
           profilesMap = new Map(
             profiles.map((p: { id: number; full_name: string | null }) => [p.id, p.full_name ?? ''])
@@ -214,47 +232,33 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
   const [selectedImpulse, setSelectedImpulse] = useState<ImpulseLocation | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [impulses, setImpulses] = useState<ImpulseLocation[]>([]);
-  const [selectedImpulseAddress, setSelectedImpulseAddress] = useState<string>('');
+  const initAttemptsRef = useRef(0);
+  const maxInitAttempts = 5;
 
-  // Инициализация Telegram WebApp
-  useEffect(() => {
-    try {
-      if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
-        WebApp.ready();
-        WebApp.expand();
-        console.log('[MapScreen] Telegram WebApp initialized');
-      }
-    } catch (e) {
-      console.error('[MapScreen] Error initializing WebApp:', e);
-    }
-  }, []);
-
-  // Инициализация карты с использованием requestAnimationFrame
+  // Инициализация карты с защитным механизмом
   const initializeMap = useCallback(async () => {
-    // КРИТИЧЕСКАЯ ПРОВЕРКА: если ref не привязан, используем requestAnimationFrame
+    // КРИТИЧЕСКАЯ ПРОВЕРКА: если ref не привязан, выходим
     if (!mapRef.current) {
-      requestAnimationFrame(() => {
-        if (mapRef.current) {
-          initializeMap();
-        } else {
-          // Fallback через setTimeout
-          setTimeout(() => {
-            if (mapRef.current) {
-              initializeMap();
-            } else {
-              console.error('[MapScreen] mapRef.current is null после ожидания');
-              setStatus('error');
-              setErrorMessage('Контейнер карты не найден');
-            }
-          }, 100);
-        }
-      });
+      initAttemptsRef.current++;
+      console.warn(`[MapScreen] mapRef.current is null, attempt ${initAttemptsRef.current}/${maxInitAttempts}`);
+      
+      if (initAttemptsRef.current >= maxInitAttempts) {
+        console.error('[MapScreen] mapRef.current is null after max attempts');
+        setStatus('error');
+        setErrorMessage('Контейнер карты не найден. Проверьте консоль для деталей.');
+        return;
+      }
+      
+      // Повторная попытка через 100мс
+      setTimeout(() => {
+        initializeMap();
+      }, 100);
       return;
     }
 
     // Проверяем, что карта еще не инициализирована
     if (mapInstanceRef.current) {
-      console.log('[MapScreen] Map already initialized');
+      console.log('[MapScreen] Map already initialized, skipping...');
       return;
     }
 
@@ -264,11 +268,13 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
       // Получаем геопозицию пользователя
       console.log('[MapScreen] Запрос геопозиции пользователя...');
       const userLocation = await getUserLocation();
+      const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
       const center: GeoLocation = userLocation;
-      const zoom = 14; // Оптимальный масштаб для города
+      const zoom = isDefaultLocation ? 13 : 15; // zoom 15 для GPS, 13 для резервной локации
 
       console.log('[MapScreen] Создание карты с центром:', center, 'zoom:', zoom);
       
+      // Финальная проверка перед инициализацией
       if (!mapRef.current) {
         throw new Error('mapRef.current is null перед инициализацией');
       }
@@ -282,16 +288,15 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
       
       console.log(`[MapScreen] Загружено ${loadedImpulses.length} импульсов`);
       
-      // Отображаем все маркеры в видимой области
+      // Отображаем все маркеры
       if (loadedImpulses.length > 0) {
         map.setMarkers(loadedImpulses, (impulse) => {
           setSelectedImpulse(impulse);
-          setSelectedImpulseAddress(impulse.address || '');
           
           // Вибрация при клике на маркер
           if (WebApp.HapticFeedback) {
             try {
-              WebApp.HapticFeedback.impactOccurred('light');
+              WebApp.HapticFeedback.impactOccurred('medium');
             } catch (e) {
               console.warn('[MapScreen] Haptic feedback error:', e);
             }
@@ -319,12 +324,28 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
     }
   }, [activeCategory]);
 
-  // Инициализация при монтировании
-  useEffect(() => {
-    // Используем requestAnimationFrame для гарантии готовности DOM
-    requestAnimationFrame(() => {
+  // useLayoutEffect для гарантии готовности DOM
+  useLayoutEffect(() => {
+    if (mapRef.current) {
+      console.log('[MapScreen] DOM готов, mapRef привязан через useLayoutEffect');
       initializeMap();
-    });
+    } else {
+      console.warn('[MapScreen] DOM не готов в useLayoutEffect, будет повторная попытка');
+    }
+  }, [initializeMap]);
+
+  // useEffect как fallback с защитным механизмом
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!mapInstanceRef.current && mapRef.current) {
+        console.log('[MapScreen] Fallback инициализация через useEffect');
+        initializeMap();
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+    };
   }, [initializeMap]);
 
   // Обновляем маркеры при изменении активной категории
@@ -333,11 +354,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
       console.log('[MapScreen] Обновление маркеров с активной категорией:', activeCategory);
       mapInstanceRef.current.setMarkers(impulses, (impulse) => {
         setSelectedImpulse(impulse);
-        setSelectedImpulseAddress(impulse.address || '');
         
         if (WebApp.HapticFeedback) {
           try {
-            WebApp.HapticFeedback.impactOccurred('light');
+            WebApp.HapticFeedback.impactOccurred('medium');
           } catch (e) {
             console.warn('[MapScreen] Haptic feedback error:', e);
           }
@@ -362,7 +382,6 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
 
   const hideBalloon = () => {
     setSelectedImpulse(null);
-    setSelectedImpulseAddress('');
   };
 
   const handleFlyToMarker = () => {
@@ -375,7 +394,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
       // Вибрация
       if (WebApp.HapticFeedback) {
         try {
-          WebApp.HapticFeedback.impactOccurred('light');
+          WebApp.HapticFeedback.impactOccurred('medium');
         } catch (e) {
           // ignore
         }
@@ -406,7 +425,21 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
 
   return (
     <div className="relative w-full h-screen bg-black">
-      <div id="map" ref={mapRef} style={{ width: '100%', height: '100vh' }} />
+      {/* Контейнер карты с явными стилями */}
+      <div 
+        id="map" 
+        ref={mapRef} 
+        style={{ 
+          width: '100%', 
+          height: '100%',
+          minHeight: '100vh',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+        }} 
+      />
       
       {/* Баллун с детальной информацией об импульсе */}
       <AnimatePresence>
@@ -432,6 +465,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
                 </button>
               </div>
               
+              <h3 className="text-base font-semibold text-white mb-2">Событие</h3>
+              
               <p className="text-sm text-white/90 leading-relaxed mb-3">
                 {selectedImpulse.content}
               </p>
@@ -446,13 +481,13 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
                 </div>
               )}
               
-              {selectedImpulseAddress && (
+              {selectedImpulse.address && (
                 <div className="flex items-center gap-2 text-xs text-white/60 mb-3">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
                     <circle cx="6" cy="4" r="1" fill="currentColor"/>
                   </svg>
-                  <span>{selectedImpulseAddress}</span>
+                  <span>{selectedImpulse.address}</span>
                 </div>
               )}
               
@@ -466,7 +501,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, onCategoryChange 
                 onClick={handleFlyToMarker}
                 className="w-full mt-2 px-4 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
               >
-                📍 Показать на карте
+                📍 Найти на карте
               </button>
             </motion.div>
           </div>
