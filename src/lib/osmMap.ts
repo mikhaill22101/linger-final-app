@@ -1,8 +1,7 @@
 import L, { Map as LeafletMap, Marker as LeafletMarker } from 'leaflet';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
 
-// Leaflet требует CSS. Подключите в src/index.css:
-// import 'leaflet/dist/leaflet.css';
+// Leaflet CSS подключен в src/index.css
 
 export const osmMapAdapter: MapAdapter = {
   async initMap(container: HTMLDivElement, center: GeoLocation): Promise<MapInstance> {

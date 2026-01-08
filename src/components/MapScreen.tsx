@@ -107,6 +107,8 @@ const MapScreen: React.FC = () => {
 
     const init = async () => {
       try {
+        console.log('Используется бесплатная карта OpenStreetMap');
+        
         const userLocation = await getUserLocation();
         const center: GeoLocation = userLocation ?? { lat: 55.7558, lng: 37.6173 };
 
