@@ -3,6 +3,7 @@ import WebApp from '@twa-dev/sdk';
 import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
+import MapScreen from './components/MapScreen';
 import { supabase } from './lib/supabase';
 
 interface Impulse {
@@ -97,7 +98,7 @@ const categories = [
 ];
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'profile' | 'map'>('home');
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [messageContent, setMessageContent] = useState('');
@@ -141,7 +142,7 @@ function App() {
     WebApp.HapticFeedback.impactOccurred('light');
   };
 
-  const handleTabChange = (tab: 'home' | 'profile') => {
+  const handleTabChange = (tab: 'home' | 'profile' | 'map') => {
     setActiveTab(tab);
     WebApp.HapticFeedback.impactOccurred('light');
   };
@@ -252,7 +253,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
-      <div className="flex-1 pb-20">
+      <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'}`}>
         {activeTab === 'home' ? (
           <>
             <header className="pt-16 pb-8 px-6 text-center">
@@ -348,8 +349,10 @@ function App() {
               )}
             </section>
           </>
-        ) : (
+        ) : activeTab === 'profile' ? (
           <Profile />
+        ) : (
+          <MapScreen />
         )}
       </div>
 
@@ -427,6 +430,17 @@ function App() {
             <Home size={22} className={activeTab === 'home' ? 'text-white' : 'text-white/50'} />
             <span className="text-xs font-light">
               {isRussian ? 'Главная' : 'Home'}
+            </span>
+          </button>
+          <button
+            onClick={() => handleTabChange('map')}
+            className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+              activeTab === 'map' ? 'text-white' : 'text-white/50'
+            }`}
+          >
+            <MapPin size={22} className={activeTab === 'map' ? 'text-white' : 'text-white/50'} />
+            <span className="text-xs font-light">
+              {isRussian ? 'Карта' : 'Map'}
             </span>
           </button>
           <button
