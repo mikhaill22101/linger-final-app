@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Trash2, Clock } from 'lucide-react';
+import WebApp from '@twa-dev/sdk';
 
 interface TelegramUser {
   id?: number;
@@ -16,6 +19,13 @@ interface ProfileState {
   telegramId?: number;
 }
 
+interface MyImpulse {
+  id: number;
+  content: string;
+  category: string;
+  created_at: string;
+}
+
 const Profile: React.FC = () => {
   const [profile, setProfile] = useState<ProfileState>({
     firstName: '',
@@ -26,6 +36,9 @@ const Profile: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [myImpulses, setMyImpulses] = useState<MyImpulse[]>([]);
+  const [isLoadingImpulses, setIsLoadingImpulses] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
 
   // Загрузка профиля из базы данных
   useEffect(() => {
@@ -82,6 +95,82 @@ const Profile: React.FC = () => {
 
     loadProfile();
   }, []);
+
+  useEffect(() => {
+    if (profile.telegramId) {
+      loadMyImpulses();
+    }
+  }, [profile.telegramId]);
+
+  const loadMyImpulses = async () => {
+    if (!profile.telegramId) return;
+
+    try {
+      setIsLoadingImpulses(true);
+      const { data, error } = await supabase
+        .from('impulses')
+        .select('id, content, category, created_at')
+        .eq('creator_id', profile.telegramId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading my impulses:', error);
+      } else {
+        setMyImpulses(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load my impulses:', err);
+    } finally {
+      setIsLoadingImpulses(false);
+    }
+  };
+
+  const handleDeleteImpulse = async (id: number) => {
+    try {
+      setDeletingIds(prev => new Set(prev).add(id));
+      
+      const { error } = await supabase
+        .from('impulses')
+        .delete()
+        .eq('id', id)
+        .eq('creator_id', profile.telegramId);
+
+      if (error) {
+        console.error('Error deleting impulse:', error);
+        WebApp.showAlert('Error deleting message');
+      } else {
+        // Удаляем из локального состояния
+        setMyImpulses(prev => prev.filter(impulse => impulse.id !== id));
+        WebApp.HapticFeedback.impactOccurred('light');
+      }
+    } catch (err) {
+      console.error('Failed to delete impulse:', err);
+      WebApp.showAlert('Error deleting message');
+    } finally {
+      setDeletingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+    if (minutes < 1) return isRussian ? 'только что' : 'just now';
+    if (minutes < 60) return isRussian ? `${minutes} мин назад` : `${minutes}m ago`;
+    if (hours < 24) return isRussian ? `${hours} ч назад` : `${hours}h ago`;
+    if (days < 7) return isRussian ? `${days} дн назад` : `${days}d ago`;
+    return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
+  };
 
   const handleBioChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value;
@@ -220,6 +309,78 @@ const Profile: React.FC = () => {
             <p className="mt-1 text-[10px] text-center text-white/40 leading-snug">
               Your profile is saved to Supabase database.
             </p>
+
+            {/* Мои записи */}
+            <div className="mt-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium tracking-[0.2em] text-white/50 uppercase">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Мои записи' : 'My Messages';
+                  })()}
+                </p>
+                {myImpulses.length > 0 && (
+                  <span className="text-[10px] text-white/40">
+                    {myImpulses.length}
+                  </span>
+                )}
+              </div>
+
+              {isLoadingImpulses ? (
+                <div className="text-center py-4 text-white/40 text-xs">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Загрузка...' : 'Loading...';
+                  })()}
+                </div>
+              ) : myImpulses.length === 0 ? (
+                <div className="text-center py-4 text-white/40 text-xs">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Пока нет записей' : 'No messages yet';
+                  })()}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  <AnimatePresence>
+                    {myImpulses.map((impulse) => (
+                      <motion.div
+                        key={impulse.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-start justify-between gap-3"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[10px] text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
+                              {impulse.category}
+                            </span>
+                            <div className="flex items-center gap-1 text-[10px] text-white/30">
+                              <Clock size={10} />
+                              <span>{formatTime(impulse.created_at)}</span>
+                            </div>
+                          </div>
+                          <p className="text-xs text-white/70 leading-relaxed line-clamp-2">
+                            {impulse.content}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteImpulse(impulse.id)}
+                          disabled={deletingIds.has(impulse.id)}
+                          className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 
+                            size={14} 
+                            className="text-white/40 hover:text-red-400 transition-colors" 
+                          />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -1,9 +1,20 @@
 import WebApp from '@twa-dev/sdk'; 
 import { useState, useEffect } from 'react';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
 import { supabase } from './lib/supabase';
+
+interface Impulse {
+  id: number;
+  content: string;
+  category: string;
+  creator_id: number;
+  created_at: string;
+  author_name?: string;
+  location_lat?: number;
+  location_lng?: number;
+}
 // Определяем категории с их цветами и описаниями
 const categories = [
   { 
@@ -91,11 +102,38 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [messageContent, setMessageContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feed, setFeed] = useState<Impulse[]>([]);
+  const [isLoadingFeed, setIsLoadingFeed] = useState(true);
+
+  // Определяем язык (по умолчанию русский, если в Telegram стоит 'ru')
+  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
   useEffect(() => {
     WebApp.ready();
     WebApp.expand(); // Развернет приложение на весь экран в Telegram
+    loadFeed();
   }, []);
+
+  const loadFeed = async () => {
+    try {
+      setIsLoadingFeed(true);
+      const { data, error } = await supabase
+        .from('impulse_with_author')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('Error loading feed:', error);
+      } else {
+        setFeed(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load feed:', err);
+    } finally {
+      setIsLoadingFeed(false);
+    }
+  };
   
   const handleCategoryClick = (id: string) => {
     // Открываем модальное окно вместо раскрытия подсказки
@@ -116,6 +154,29 @@ function App() {
     setModalOpen(false);
     setSelectedCategory(null);
     setMessageContent('');
+  };
+
+  const getCurrentLocation = (): Promise<{ lat: number; lng: number } | null> => {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => {
+          console.log('Geolocation error:', error);
+          resolve(null);
+        },
+        { timeout: 5000, maximumAge: 60000 }
+      );
+    });
   };
 
   const handleSendMessage = async () => {
@@ -140,6 +201,14 @@ function App() {
       const category = categories.find(cat => cat.id === selectedCategory);
       const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
 
+      // Получаем геолокацию
+      const location = await getCurrentLocation();
+      const locationData: { location_lat?: number; location_lng?: number } = {};
+      if (location) {
+        locationData.location_lat = location.lat;
+        locationData.location_lng = location.lng;
+      }
+
       // Отправляем в таблицу impulses
       const { data, error } = await supabase
         .from('impulses')
@@ -147,6 +216,7 @@ function App() {
           content: messageContent.trim(),
           category: categoryName,
           creator_id: userId,
+          ...locationData,
         })
         .select()
         .single();
@@ -160,6 +230,8 @@ function App() {
         WebApp.showAlert(isRussian ? 'Сообщение успешно отправлено!' : 'Message sent successfully!');
         // Закрываем модальное окно
         handleCloseModal();
+        // Обновляем ленту
+        loadFeed();
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -168,9 +240,21 @@ function App() {
       setIsSubmitting(false);
     }
   };
-  
-  // Определяем язык (по умолчанию русский, если в Telegram стоит 'ru')
-  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return isRussian ? 'только что' : 'just now';
+    if (minutes < 60) return isRussian ? `${minutes} мин назад` : `${minutes}m ago`;
+    if (hours < 24) return isRussian ? `${hours} ч назад` : `${hours}h ago`;
+    if (days < 7) return isRussian ? `${days} дн назад` : `${days}d ago`;
+    return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
+  };
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
@@ -198,7 +282,7 @@ function App() {
             </header>
 
             {/* Список категорий */}
-            <main className="px-4 pb-12 space-y-4">
+            <main className="px-4 pb-6 space-y-4">
               {categories.map((cat) => (
                 <div key={cat.id} className="relative overflow-visible">
                   <motion.button
@@ -218,6 +302,61 @@ function App() {
                 </div>
               ))}
             </main>
+
+            {/* Лента активности */}
+            <section className="px-4 pb-12">
+              <h2 className="text-xl font-light mb-4 text-white/80">
+                {isRussian ? 'Лента активности' : 'Activity Feed'}
+              </h2>
+              {isLoadingFeed ? (
+                <div className="text-center py-8 text-white/40">
+                  {isRussian ? 'Загрузка...' : 'Loading...'}
+                </div>
+              ) : feed.length === 0 ? (
+                <div className="text-center py-8 text-white/40">
+                  {isRussian ? 'Пока нет сообщений' : 'No messages yet'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <AnimatePresence>
+                    {feed.map((impulse, index) => (
+                      <motion.div
+                        key={impulse.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        transition={{ delay: index * 0.05 }}
+                        className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-white">
+                              {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
+                            </span>
+                            <span className="text-xs text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
+                              {impulse.category}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-white/40">
+                            <Clock size={12} />
+                            <span>{formatTime(impulse.created_at)}</span>
+                          </div>
+                        </div>
+                        <p className="text-sm text-white/80 leading-relaxed">
+                          {impulse.content}
+                        </p>
+                        {impulse.location_lat && impulse.location_lng && (
+                          <div className="mt-2 flex items-center gap-1 text-xs text-white/40">
+                            <MapPin size={12} />
+                            <span>{isRussian ? 'С геолокацией' : 'With location'}</span>
+                          </div>
+                        )}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </section>
           </>
         ) : (
           <Profile />
