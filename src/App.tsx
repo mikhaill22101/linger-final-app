@@ -15,6 +15,7 @@ interface Impulse {
   creator_id: number;
   created_at: string;
   author_name?: string;
+  author_avatar?: string;
   location_lat?: number;
   location_lng?: number;
   distance?: number;
@@ -143,6 +144,15 @@ function App() {
     return R * c;
   };
 
+  // Функция форматирования расстояния
+  const formatDistance = (km: number): string => {
+    if (km === Infinity || isNaN(km)) return '';
+    if (km < 1) {
+      return `${Math.round(km * 1000)} м`;
+    }
+    return `${km.toFixed(1)} км`;
+  };
+
   useEffect(() => {
     try {
       WebApp.ready();
@@ -209,20 +219,23 @@ function App() {
         return;
       }
 
-      // Загружаем имена авторов отдельно
+      // Загружаем имена авторов и аватары отдельно
       const creatorIds = [...new Set(data.map((item: any) => item.creator_id))];
-      let profilesMap = new Map<number, string>();
+      let profilesMap = new Map<number, { name: string; avatar?: string }>();
 
       if (creatorIds.length > 0) {
         try {
           const { data: profiles } = await supabase
             .from('profiles')
-            .select('id, full_name')
+            .select('id, full_name, avatar_url')
             .in('id', creatorIds);
 
           if (profiles) {
             profilesMap = new Map(
-              profiles.map((p: { id: number; full_name: string | null }) => [p.id, p.full_name ?? ''])
+              profiles.map((p: { id: number; full_name: string | null; avatar_url?: string | null }) => [
+                p.id, 
+                { name: p.full_name ?? '', avatar: p.avatar_url || undefined }
+              ])
             );
           }
         } catch (profileError) {
@@ -241,6 +254,7 @@ function App() {
             item.location_lng
           );
         }
+        const profile = profilesMap.get(item.creator_id);
         return {
           id: item.id,
           content: item.content,
@@ -249,7 +263,8 @@ function App() {
           created_at: item.created_at,
           location_lat: item.location_lat,
           location_lng: item.location_lng,
-          author_name: profilesMap.get(item.creator_id) || undefined,
+          author_name: profile?.name || undefined,
+          author_avatar: profile?.avatar,
           distance,
           event_date: item.event_date,
           event_time: item.event_time,
@@ -485,6 +500,16 @@ function App() {
         WebApp.showAlert(errorMessage);
       } else {
         console.log('Message sent successfully:', data);
+        
+        // Haptic feedback для успешного создания
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+          } catch (e) {
+            console.warn('Haptic error:', e);
+          }
+        }
+        
         WebApp.showAlert(isRussian ? 'Событие успешно создано!' : 'Event created successfully!');
         handleCloseModal();
         loadFeed();
@@ -575,24 +600,35 @@ function App() {
             </header>
 
             <main className="px-4 pb-6 space-y-4">
-              {categories.map((cat) => (
-                <div key={cat.id} className="relative overflow-visible">
-                  <motion.button
-                    onClick={() => handleCategoryClick(cat.id)}
-                    className="relative w-full p-5 rounded-2xl flex items-center justify-between border bg-white/5 border-white/10 hover:bg-black/40 hover:border-white/20 transition-all duration-500 backdrop-blur-xl z-10"
-                  >
-                    <div className="flex items-center gap-4">
-                      <cat.icon size={22} className="text-gray-400" />
-                      <span className="text-lg font-light tracking-wide">
-                        {isRussian ? cat.label.ru : cat.label.en}
+              {categories.map((cat) => {
+                const categoryClass = `category-${cat.id}`;
+                const isActive = activeCategory === cat.id;
+                
+                return (
+                  <div key={cat.id} className="relative overflow-visible">
+                    <motion.button
+                      onClick={() => handleCategoryClick(cat.id)}
+                      className={`relative w-full p-5 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 z-10 ${
+                        isActive ? 'border-white/30' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`category-ring ${categoryClass} ${isActive ? 'active' : ''}`}>
+                          <div className="category-icon-wrapper">
+                            <cat.icon size={22} className="text-white/80" />
+                          </div>
+                        </div>
+                        <span className="text-lg font-light tracking-wide text-white">
+                          {isRussian ? cat.label.ru : cat.label.en}
+                        </span>
+                      </div>
+                      <span className="text-xs text-white/40">
+                        {isRussian ? 'Нажмите' : 'Tap'}
                       </span>
-                    </div>
-                    <span className="text-xs text-white/40">
-                      {isRussian ? 'Нажмите' : 'Tap'}
-                    </span>
-                  </motion.button>
-                </div>
-              ))}
+                    </motion.button>
+                  </div>
+                );
+              })}
             </main>
 
             <section className="px-4 pb-12">
@@ -673,11 +709,11 @@ function App() {
                         return (
                           <motion.div
                             key={impulse.id}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -20 }}
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
                             transition={{ delay: index * 0.05 }}
-                            className="bg-white/5 border border-white/10 rounded-xl p-2.5 backdrop-blur-md relative"
+                            className="compact-event-card relative"
                           >
                             {/* Индикатор новизны для событий < 2 часов */}
                             {isNewEvent(impulse.created_at) && (
@@ -685,47 +721,62 @@ function App() {
                                 initial={{ opacity: 0, scale: 0.8 }}
                                 animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
                                 transition={{ duration: 2, repeat: Infinity }}
-                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg z-10"
+                                className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg z-10"
                               >
-                                <span className="text-[10px]">🔥</span>
+                                <span className="text-[8px]">🔥</span>
                               </motion.div>
                             )}
                             
-                            {/* Верхний ряд: Имя автора, категория, время публикации */}
-                            <div className="flex items-center justify-between mb-1.5 gap-2">
-                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                                <span className="text-sm font-bold text-white truncate">
+                            {/* Слева: Аватар + Имя */}
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <div className="relative">
+                                {impulse.author_avatar ? (
+                                  <img 
+                                    src={impulse.author_avatar} 
+                                    alt={impulse.author_name || 'User'}
+                                    className="w-8 h-8 rounded-full object-cover border-2 border-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 p-[2px]"
+                                    style={{
+                                      borderImage: 'linear-gradient(135deg, #6366f1, #a855f7, #ec4899) 1',
+                                      boxShadow: '0 0 10px rgba(99, 102, 241, 0.5)',
+                                    }}
+                                  />
+                                ) : (
+                                  <div 
+                                    className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-xs font-bold"
+                                    style={{
+                                      boxShadow: '0 0 10px rgba(99, 102, 241, 0.5)',
+                                    }}
+                                  >
+                                    {(impulse.author_name || 'A')[0].toUpperCase()}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-bold text-white leading-tight truncate">
                                   {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
                                 </span>
-                                <span className="text-[10px] text-white/40 px-1.5 py-0.5 bg-white/5 rounded-full flex-shrink-0">
-                                  {impulse.category}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 text-[12px] text-white/40 flex-shrink-0">
-                                <Clock size={10} />
-                                <span>{formatTime(impulse.created_at)}</span>
                               </div>
                             </div>
                             
-                            {/* Нижний ряд: Описание (слева) + Дата и адрес (справа) */}
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-bold text-white/90 leading-tight flex-1 min-w-0 line-clamp-2">
-                                {impulse.content}
-                              </p>
-                              <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-                                {dateTimeStr && (
-                                  <div className="flex items-center gap-1 text-[12px] text-white/50">
-                                    <Clock size={10} />
-                                    <span className="whitespace-nowrap">{dateTimeStr}</span>
-                                  </div>
-                                )}
-                                {impulse.location_lat && impulse.location_lng && (
-                                  <div className="flex items-center gap-1 text-[12px] text-white/50">
-                                    <MapPin size={10} />
-                                    <span className="whitespace-nowrap">{isRussian ? 'На карте' : 'On map'}</span>
-                                  </div>
-                                )}
-                              </div>
+                            {/* Центр: Текст события (одна строка) */}
+                            <p className="text-sm font-medium text-white/90 leading-tight flex-1 min-w-0 line-clamp-1 px-2">
+                              {impulse.content}
+                            </p>
+                            
+                            {/* Справа: Дата и дистанция */}
+                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                              {dateTimeStr && (
+                                <div className="flex items-center gap-1 text-[11px] text-white/60">
+                                  <Clock size={10} />
+                                  <span className="whitespace-nowrap">{dateTimeStr}</span>
+                                </div>
+                              )}
+                              {impulse.distance !== undefined && impulse.distance !== Infinity && (
+                                <div className="flex items-center gap-1 text-[11px] text-white/60">
+                                  <MapPin size={10} />
+                                  <span className="whitespace-nowrap">{formatDistance(impulse.distance)}</span>
+                                </div>
+                              )}
                             </div>
                           </motion.div>
                         );
@@ -735,32 +786,27 @@ function App() {
                     {/* Ячейка призыва к действию - всегда последняя, компактная */}
                     {shouldShowCallToAction && (
                       <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: (eventsToShow.length) * 0.05 }}
-                        className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-xl p-2.5 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
+                        className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
                         onClick={() => {
                           const category = categories[Math.floor(Math.random() * categories.length)];
                           handleCategoryClick(category.id);
                           if (window.Telegram?.WebApp?.HapticFeedback) {
                             try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
                             } catch (e) {
                               console.warn('Haptic error:', e);
                             }
                           }
                         }}
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="text-base flex-shrink-0">✨</span>
-                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                            <p className="text-sm font-bold text-white/90 leading-tight">
-                              {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
-                            </p>
-                            <p className="text-[12px] text-white/60 leading-tight">
-                              {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
-                            </p>
-                          </div>
+                        <div className="flex items-center gap-3 flex-1">
+                          <span className="text-xl flex-shrink-0">✨</span>
+                          <p className="text-sm font-bold text-white leading-tight flex-1">
+                            {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
+                          </p>
                         </div>
                       </motion.div>
                     )}
@@ -844,7 +890,7 @@ function App() {
                           setStep('location');
                           if (window.Telegram?.WebApp?.HapticFeedback) {
                             try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
                             } catch (e) {
                               console.warn('Haptic error:', e);
                             }
@@ -852,7 +898,7 @@ function App() {
                         }
                       }}
                       disabled={isSubmitting || !messageContent.trim()}
-                      className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {(() => {
                         const category = categories.find(cat => cat.id === selectedCategory);
@@ -1002,8 +1048,9 @@ function App() {
                             </div>
                           </div>
 
-                          {/* Плавающая кнопка булавки */}
+                          {/* Floating Pin Button - справа внизу */}
                           <button
+                            type="button"
                             onClick={() => {
                               setIsMapSelectionMode(true);
                               if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -1014,12 +1061,12 @@ function App() {
                                 }
                               }
                             }}
-                            className="absolute bottom-0 right-0 w-14 h-14 rounded-full bg-white/90 backdrop-blur-md border-2 border-white/30 shadow-lg hover:bg-white hover:shadow-xl transition-all flex items-center justify-center z-10"
+                            className="fixed bottom-24 right-6 w-14 h-14 rounded-full bg-white border-2 border-white/30 shadow-lg flex items-center justify-center z-[60] hover:scale-110 transition-transform"
                             style={{
-                              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+                              boxShadow: '0 0 20px rgba(255, 255, 255, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3)',
                             }}
                           >
-                            <MapPin size={24} className="text-indigo-600" strokeWidth={2.5} />
+                            <MapPin size={24} className="text-black" />
                           </button>
                         </div>
                       )}
@@ -1038,9 +1085,18 @@ function App() {
                       {isRussian ? 'Назад' : 'Back'}
                     </button>
                     <button
-                      onClick={handleSendMessage}
+                      onClick={() => {
+                        if (window.Telegram?.WebApp?.HapticFeedback) {
+                          try {
+                            window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                          } catch (e) {
+                            console.warn('Haptic error:', e);
+                          }
+                        }
+                        handleSendMessage();
+                      }}
                       disabled={isSubmitting || (!eventCoords && !eventAddress.trim())}
-                      className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isSubmitting 
                         ? (isRussian ? 'Создание...' : 'Creating...') 

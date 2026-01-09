@@ -4,6 +4,7 @@
 :root {
   background-color: #000000;
   color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
 }
 
 body {
@@ -11,6 +12,21 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: #000000;
+  line-height: 1.4;
+}
+
+/* Глобальные стили для Glassmorphism */
+.glass-card {
+  background: rgba(18, 18, 18, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Градиент для кнопок и активных элементов */
+.gradient-primary {
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
 }
 
 /* Анимация переливания для активных маркеров (пульсация) */
@@ -127,36 +143,111 @@ body {
   overflow: hidden;
 }
 
-/* Анимация пульсации для маркера выбора */
-@keyframes pulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.2);
-    opacity: 0.8;
-  }
-}
-
-.selection-marker div {
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-/* Скрытие скроллбара для виджета близлежащих событий */
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
-}
-
-/* Поддержка line-clamp для обрезки текста */
-.line-clamp-2 {
+.line-clamp-1 {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Анимация бегущей волны для категорий (conic-gradient) */
+@keyframes conicRotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Стили для категорий с анимацией бегущей волны */
+.category-ring {
+  position: relative;
+  border-radius: 50%;
+  padding: 2px;
+  background: conic-gradient(
+    from 0deg,
+    var(--category-color-1),
+    var(--category-color-2),
+    var(--category-color-1)
+  );
+  background-size: 200% 200%;
+  animation: conicRotate 3s linear infinite;
+  transition: all 0.3s ease;
+}
+
+.category-ring.active {
+  animation: conicRotate 1.5s linear infinite;
+  box-shadow: 0 0 20px var(--category-color-1), 0 0 40px var(--category-color-2);
+  transform: scale(1.1);
+}
+
+.category-icon-wrapper {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(18, 18, 18, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Цвета для категорий (для conic-gradient) */
+.category-spark,
+.category-impulse {
+  --category-color-1: #ff6b35;
+  --category-color-2: #ff4b2b;
+}
+
+.category-artgo {
+  --category-color-1: #4a90e2;
+  --category-color-2: #6366f1;
+}
+
+.category-walk {
+  --category-color-1: #10b981;
+  --category-color-2: #34d399;
+}
+
+.category-tasty {
+  --category-color-1: #f59e0b;
+  --category-color-2: #fbbf24;
+}
+
+.category-sync {
+  --category-color-1: #ec4899;
+  --category-color-2: #a855f7;
+}
+
+.category-hobby {
+  --category-color-1: #06b6d4;
+  --category-color-2: #67e8f9;
+}
+
+/* Компактная карточка события */
+.compact-event-card {
+  background: rgba(18, 18, 18, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 8px 12px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Аватар с неоновой обводкой */
+.avatar-neon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid;
+  border-image: linear-gradient(135deg, #6366f1, #a855f7, #ec4899) 1;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
 }

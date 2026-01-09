@@ -49,6 +49,7 @@ const Profile: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ id: number; user_id: number; text: string; created_at: string; profiles?: { full_name?: string } }>>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [fireRating, setFireRating] = useState<number>(0); // Рейтинг огоньков
   const channelRef = React.useRef<any>(null);
 
   // Загрузка профиля из базы данных
@@ -207,6 +208,8 @@ const Profile: React.FC = () => {
             })
           );
           setMyImpulses(impulsesWithAddresses);
+          // Рейтинг огоньков = количество созданных событий
+          setFireRating(impulsesWithAddresses.length);
         }
       } catch (err) {
         console.error('Failed to load my impulses:', err);
@@ -765,6 +768,14 @@ const Profile: React.FC = () => {
               </div>
             </div>
 
+            {/* Рейтинг огоньков */}
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl glass-card">
+              <span className="text-lg">🔥</span>
+              <span className="text-sm font-medium text-white/90">
+                {fireRating} {fireRating === 1 ? (window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' ? 'Огонек' : 'Fire') : (window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' ? 'Огоньков' : 'Fires')}
+              </span>
+            </div>
+
             {/* Bio */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -860,11 +871,35 @@ const Profile: React.FC = () => {
                               <span>{formatTime(impulse.created_at)}</span>
                             </div>
                           </div>
-                          <p className="text-xs text-white/70 leading-relaxed mb-2">
+                          <p className="text-xs text-white/70 leading-relaxed mb-1.5">
                             <span className="font-semibold text-purple-400">{impulse.category}:</span> {impulse.content}
                           </p>
-                          {/* Адрес */}
-                          {impulse.address && (
+                          {/* Адрес и время в одну компактную строку */}
+                          <div className="flex items-center gap-2 text-[11px] text-[#888]">
+                            {impulse.address && (
+                              <span className="truncate">{impulse.address}</span>
+                            )}
+                            {impulse.event_date && impulse.event_time && (
+                              <span className="flex-shrink-0">
+                                {(() => {
+                                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                                  const eventDate = new Date(impulse.event_date);
+                                  const today = new Date();
+                                  const isToday = eventDate.toDateString() === today.toDateString();
+                                  
+                                  if (isToday) {
+                                    return isRussian ? `Сегодня ${impulse.event_time}` : `Today ${impulse.event_time}`;
+                                  } else {
+                                    return isRussian
+                                      ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${impulse.event_time}`
+                                      : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${impulse.event_time}`;
+                                  }
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                          {/* Старый блок адреса - удален */}
+                          {false && impulse.address && (
                             <div className="flex items-center gap-1 text-[10px] text-white/50 mb-1">
                               <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
                                 <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
