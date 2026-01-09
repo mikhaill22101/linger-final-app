@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search, Dice6 } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -23,6 +23,13 @@ interface Impulse {
   event_date?: string;
   event_time?: string;
   address?: string;
+}
+
+interface EventTemplate {
+  id: number;
+  category_id: string;
+  title_template: string;
+  created_at?: string;
 }
 
 const categories = [
@@ -115,6 +122,14 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [messageContent, setMessageContent] = useState('');
+  const [autoTitle, setAutoTitle] = useState<string>(''); // Автоматически сгенерированный заголовок
+  const [titleGenerated, setTitleGenerated] = useState(false); // Флаг, что заголовок был сгенерирован
+  const [isManualTitle, setIsManualTitle] = useState(false); // Флаг, что пользователь ввел заголовок вручную
+  const [titleFlash, setTitleFlash] = useState(false); // Флаг для визуального эффекта мерцания
+  const [eventTemplates, setEventTemplates] = useState<EventTemplate[]>([]); // Шаблоны заголовков из БД
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const templatesCacheRef = useRef<EventTemplate[] | null>(null); // Кэш шаблонов
+  const lastUsedTemplateIndexRef = useRef<Record<string, number>>({}); // Индекс последнего использованного шаблона для каждой категории
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feed, setFeed] = useState<Impulse[]>([]);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
@@ -132,6 +147,14 @@ function App() {
   const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0); // Количество непрочитанных сообщений
   const [selectedUserProfile, setSelectedUserProfile] = useState<{ id: number; name?: string; avatar?: string; username?: string } | null>(null); // Выбранный профиль пользователя
   const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы с выбранным пользователем
+  const [userAvatar, setUserAvatar] = useState<string | undefined>(undefined);
+  const [userName, setUserName] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState(''); // Поисковый запрос для умного подбора категории
+  const [highlightedCategory, setHighlightedCategory] = useState<string | null>(null); // Подсвеченная категория из поиска
+  const [showFriendsMap, setShowFriendsMap] = useState(false); // Режим просмотра друзей на карте
+  const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; location_lat?: number; location_lng?: number }>>([]); // Список друзей с координатами
+  const [selectedEventDetail, setSelectedEventDetail] = useState<Impulse | null>(null); // Детальное окно события
+  const [showCelebration, setShowCelebration] = useState(false); // Анимация празднования
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -143,6 +166,43 @@ function App() {
       setUserName(tgUser.first_name || tgUser.username || '');
     }
   }, []);
+
+  // Загрузка шаблонов заголовков из Supabase
+  const loadEventTemplates = async () => {
+    // Используем кэш, если он есть
+    if (templatesCacheRef.current) {
+      setEventTemplates(templatesCacheRef.current);
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      console.warn('⚠️ Supabase не настроен, пропускаем загрузку шаблонов');
+      return;
+    }
+
+    try {
+      setIsLoadingTemplates(true);
+      const { data, error } = await supabase
+        .from('event_templates')
+        .select('id, category_id, title_template, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Error loading event templates:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        // Сохраняем в кэш и состояние
+        templatesCacheRef.current = data;
+        setEventTemplates(data);
+      }
+    } catch (err) {
+      console.error('Failed to load event templates:', err);
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  };
 
   // Функция определения категории на основе текста поиска
   const detectCategoryFromText = (text: string): string | null => {
@@ -173,12 +233,54 @@ function App() {
     return null;
   };
 
-  // Обработка изменения поискового запроса
+  // Функция генерации креативных заголовков из БД
+  const generateAutoTitle = (categoryId: string | null, userText: string = '', useNext: boolean = false): string => {
+    if (!categoryId) return '';
+    
+    // Получаем шаблоны для данной категории из БД
+    const categoryTemplates = eventTemplates.filter(t => t.category_id === categoryId);
+    
+    // Если шаблонов нет в БД, возвращаем пустую строку
+    if (categoryTemplates.length === 0) {
+      console.warn(`⚠️ Нет шаблонов для категории ${categoryId}`);
+      return '';
+    }
+    
+    // Если нужно взять следующий шаблон (для кнопки кубика)
+    if (useNext) {
+      const lastIndex = lastUsedTemplateIndexRef.current[categoryId] || -1;
+      const nextIndex = (lastIndex + 1) % categoryTemplates.length;
+      lastUsedTemplateIndexRef.current[categoryId] = nextIndex;
+      return categoryTemplates[nextIndex].title_template;
+    }
+    
+    // Иначе выбираем случайный шаблон
+    const randomIndex = Math.floor(Math.random() * categoryTemplates.length);
+    lastUsedTemplateIndexRef.current[categoryId] = randomIndex;
+    return categoryTemplates[randomIndex].title_template;
+  };
+
+  // Обработка изменения поискового запроса с умным выбором шаблона
   useEffect(() => {
     if (searchQuery.trim().length >= 2) {
       const detectedCategory = detectCategoryFromText(searchQuery);
       if (detectedCategory) {
         setHighlightedCategory(detectedCategory);
+        
+        // Умный выбор: если пользователь еще не ввел заголовок вручную и шаблоны загружены
+        if (!isManualTitle && eventTemplates.length > 0 && step === 'category') {
+          const generatedTitle = generateAutoTitle(detectedCategory, searchQuery);
+          if (generatedTitle) {
+            setAutoTitle(generatedTitle);
+            setMessageContent(generatedTitle);
+            setTitleGenerated(true);
+            setIsManualTitle(false);
+            // Визуальный эффект мерцания
+            setTitleFlash(true);
+            setTimeout(() => setTitleFlash(false), 1000);
+          }
+        }
+        
         // Haptic feedback при автоматическом подборе
         if (window.Telegram?.WebApp?.HapticFeedback) {
           try {
@@ -193,7 +295,7 @@ function App() {
     } else {
       setHighlightedCategory(null);
     }
-  }, [searchQuery]);
+  }, [searchQuery, eventTemplates, isManualTitle, step]);
 
   // Функция расчета расстояния между двумя точками (Haversine formula)
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -248,7 +350,7 @@ function App() {
         }
         
         // Загружаем ленту сразу (даже без геолокации, расстояния будут пересчитаны позже)
-        loadFeed();
+    loadFeed();
         
         // Загружаем количество непрочитанных сообщений
         loadUnreadMessagesCount();
@@ -389,7 +491,24 @@ function App() {
   const handleCategoryClick = (id: string) => {
     setSelectedCategory(id);
     setStep('description'); // Переходим к шагу описания
-    setMessageContent(searchQuery || ''); // Используем текст из поиска как описание
+    
+    // Генерируем автоматический заголовок только если пользователь еще не ввел его вручную
+    if (!isManualTitle) {
+      const generatedTitle = generateAutoTitle(id, searchQuery);
+      if (generatedTitle) {
+        setAutoTitle(generatedTitle);
+        setMessageContent(generatedTitle); // Автоматически заполняем поле
+        setTitleGenerated(true);
+        setIsManualTitle(false);
+        // Визуальный эффект мерцания
+        setTitleFlash(true);
+        setTimeout(() => setTitleFlash(false), 1000);
+      } else {
+        setMessageContent(searchQuery || ''); // Используем текст из поиска как описание
+        setTitleGenerated(false);
+      }
+    }
+    
     setSearchQuery(''); // Очищаем поиск
     setHighlightedCategory(null);
     setEventAddress('');
@@ -408,6 +527,31 @@ function App() {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       } catch (e) {
         console.warn('Haptic feedback error:', e);
+      }
+    }
+  };
+
+  // Функция для "перемешивания" заголовка (берет следующий шаблон)
+  const handleShuffleTitle = () => {
+    if (selectedCategory && eventTemplates.length > 0) {
+      const newTitle = generateAutoTitle(selectedCategory, messageContent, true); // useNext = true
+      if (newTitle) {
+        setAutoTitle(newTitle);
+        setMessageContent(newTitle);
+        setTitleGenerated(true);
+        setIsManualTitle(false);
+        // Визуальный эффект мерцания
+        setTitleFlash(true);
+        setTimeout(() => setTitleFlash(false), 1000);
+        
+        // Haptic feedback
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+          } catch (e) {
+            console.warn('Haptic error:', e);
+          }
+        }
       }
     }
   };
@@ -445,6 +589,8 @@ function App() {
     setModalOpen(false);
     setSelectedCategory(null);
     setMessageContent('');
+    setAutoTitle('');
+    setTitleGenerated(false);
     setSearchQuery('');
     setHighlightedCategory(null);
     setStep('category');
@@ -689,9 +835,6 @@ function App() {
     }
   };
 
-  // Состояние для детального окна события на главной странице
-  const [selectedEventDetail, setSelectedEventDetail] = useState<Impulse | null>(null);
-
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
       <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'} relative`}>
@@ -779,7 +922,9 @@ function App() {
 
                 {/* Кнопка создания события */}
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    // Загружаем шаблоны при открытии модального окна
+                    await loadEventTemplates();
                     setModalOpen(true);
                     setStep('category');
                     setSelectedCategory(null);
@@ -797,7 +942,7 @@ function App() {
                 >
                   <PlusCircle size={22} className="text-white" />
                 </button>
-              </div>
+                    </div>
             </header>
 
             {/* Лента активности */}
@@ -842,7 +987,7 @@ function App() {
                           <p className="text-sm font-bold text-white leading-tight flex-1">
                             {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
                           </p>
-                        </div>
+                </div>
                       </motion.div>
                 </div>
                   );
@@ -936,7 +1081,7 @@ function App() {
                               {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
                             </span>
                           </div>
-                        </div>
+                          </div>
                             
                             {/* Центр: Интеллектуальная иконка + Текст события (одна строка) */}
                             <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
@@ -954,8 +1099,8 @@ function App() {
                                 <div className="flex items-center gap-1 text-[11px] text-white/60">
                                   <Clock size={10} />
                                   <span className="whitespace-nowrap">{dateTimeStr}</span>
-                                </div>
-                              )}
+                          </div>
+                        )}
                               {impulse.distance !== undefined && impulse.distance !== Infinity && (
                                 <div className="flex items-center gap-1 text-[11px] text-white/60">
                                   <MapPin size={10} />
@@ -963,10 +1108,10 @@ function App() {
                           </div>
                         )}
                             </div>
-                          </motion.div>
+                      </motion.div>
                         );
                       })}
-                    </AnimatePresence>
+                  </AnimatePresence>
                     
                     {/* Ячейка призыва к действию - всегда последняя, компактная */}
                     {shouldShowCallToAction && (
@@ -975,7 +1120,9 @@ function App() {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: (eventsToShow.length) * 0.05 }}
                         className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
-                        onClick={() => {
+                        onClick={async () => {
+                          // Загружаем шаблоны при открытии модального окна
+                          await loadEventTemplates();
                           setModalOpen(true);
                           setStep('category');
                           setSelectedCategory(null);
@@ -995,9 +1142,9 @@ function App() {
                           <p className="text-sm font-bold text-white leading-tight flex-1">
                             {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
                           </p>
-                        </div>
+                </div>
                       </motion.div>
-                    )}
+              )}
                 </div>
                 );
               })()}
@@ -1144,18 +1291,24 @@ function App() {
                           }}
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
+                          animate={isHighlighted ? { scale: 1.08 } : { scale: 1 }}
+                          transition={{ type: 'spring', stiffness: 300, damping: 20 }}
                           className={`relative p-4 rounded-2xl flex flex-col items-center justify-center gap-3 glass-card hover:bg-black/40 transition-all duration-300 ${
-                            isSelected ? 'border-2 border-white/50' : isHighlighted ? 'border-2 border-purple-400/50 scale-105' : 'border border-white/20'
+                            isSelected ? 'border-2 border-white/50' : isHighlighted ? 'border-2 border-purple-400/50' : 'border border-white/20'
                           }`}
                           style={{
                             boxShadow: isHighlighted ? '0 0 20px rgba(168, 85, 247, 0.4)' : undefined,
                           }}
                         >
-                          <div className={`category-ring ${categoryClass} ${isSelected || isHighlighted ? 'active' : ''}`}>
+                          <motion.div 
+                            className={`category-ring ${categoryClass} ${isSelected || isHighlighted ? 'active' : ''}`}
+                            animate={isHighlighted ? { scale: 1.15, rotate: [0, 5, -5, 0] } : { scale: 1, rotate: 0 }}
+                            transition={{ duration: 0.5, repeat: isHighlighted ? Infinity : 0, repeatType: 'reverse' }}
+                          >
                             <div className="category-icon-wrapper">
                               <cat.icon size={28} className="text-white/80" />
                             </div>
-                          </div>
+                          </motion.div>
                           <span className="text-sm font-light tracking-wide text-white text-center">
                             {isRussian ? cat.label.ru : cat.label.en}
                           </span>
@@ -1178,13 +1331,49 @@ function App() {
               {/* Шаг 1: Описание */}
               {step === 'description' && (
                 <>
-              <textarea
-                value={messageContent}
-                onChange={(e) => setMessageContent(e.target.value)}
-                    placeholder={isRussian ? 'Напишите описание события...' : 'Write event description...'}
-                className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
-                autoFocus
-              />
+                  {/* Поле заголовка с кнопкой "перемешать" */}
+                  <div className="relative mb-4">
+                    <input
+                      type="text"
+                      value={messageContent}
+                      onChange={(e) => {
+                        setMessageContent(e.target.value);
+                        setIsManualTitle(true); // Пользователь редактирует вручную
+                        setTitleGenerated(false);
+                        setTitleFlash(false);
+                      }}
+                      placeholder={autoTitle || (isRussian ? 'Название события...' : 'Event title...')}
+                      className={`w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3 pr-12 transition-all duration-300 ${
+                        titleFlash ? 'bg-purple-500/20 border-purple-400/50 text-purple-200' : ''
+                      }`}
+                      autoFocus
+                    />
+                    {selectedCategory && eventTemplates.length > 0 && (
+                      <motion.button
+                        onClick={handleShuffleTitle}
+                        whileHover={{ scale: 1.1, rotate: 15 }}
+                        whileTap={{ scale: 0.9 }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors"
+                        title={isRussian ? 'Сгенерировать другой вариант' : 'Generate another variant'}
+                      >
+                        <Dice6 size={18} className="text-white/80" />
+                      </motion.button>
+                    )}
+                  </div>
+                  
+                  {/* Анимация появления авто-заголовка */}
+                  <AnimatePresence>
+                    {titleGenerated && autoTitle && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="mb-3 text-xs text-white/50 italic"
+                      >
+                        {isRussian ? '✨ Автоматически предложено' : '✨ Auto-suggested'}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
               <div className="flex gap-3">
                 <button
@@ -1208,7 +1397,9 @@ function App() {
                         }
                       }}
                   disabled={isSubmitting || !messageContent.trim()}
-                      className="flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className={`flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all ${
+                        messageContent.trim() ? 'opacity-100' : 'opacity-50 cursor-not-allowed'
+                      }`}
                     >
                       {(() => {
                         const category = categories.find(cat => cat.id === selectedCategory);
