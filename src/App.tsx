@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
 import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
+import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
 import MapScreen from './components/MapScreen';
@@ -158,8 +159,8 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     try {
-      WebApp.ready();
-      WebApp.expand();
+    WebApp.ready();
+    WebApp.expand();
       
       // Получаем геопозицию пользователя
       (async () => {
@@ -184,7 +185,7 @@ function App() {
           console.warn('⚠️ Не удалось подключиться к Supabase');
         }
         
-        loadFeed();
+    loadFeed();
         
         // Загружаем количество непрочитанных сообщений
         loadUnreadMessagesCount();
@@ -633,7 +634,17 @@ function App() {
                 return (
                 <div key={cat.id} className="relative overflow-visible">
                   <motion.button
-                    onClick={() => handleCategoryClick(cat.id)}
+                    onClick={() => {
+                      handleCategoryClick(cat.id);
+                      // Тактильная отдача при клике на категорию
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
                       className={`relative w-full p-5 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 z-10 ${
                         isActive ? 'border-white/30' : ''
                       }`}
@@ -787,10 +798,15 @@ function App() {
                           </div>
                         </div>
                             
-                            {/* Центр: Текст события (одна строка) */}
-                            <p className="text-sm font-medium text-white/90 leading-tight flex-1 min-w-0 line-clamp-1 px-2">
+                            {/* Центр: Интеллектуальная иконка + Текст события (одна строка) */}
+                            <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
+                              <span className="text-sm flex-shrink-0">
+                                {getSmartIcon(impulse.content, impulse.category).emoji}
+                              </span>
+                              <p className="text-sm font-medium text-white/90 leading-tight flex-1 min-w-0 line-clamp-1">
                           {impulse.content}
                         </p>
+                            </div>
                             
                             {/* Справа: Дата и дистанция */}
                             <div className="flex flex-col items-end gap-1 flex-shrink-0">

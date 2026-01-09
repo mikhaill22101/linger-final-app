@@ -4,7 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
-import { categoryEmojis } from '../lib/categoryColors';
+import { getSmartIcon } from '../lib/smartIcon';
 
 interface ImpulseRow {
   id: number;
@@ -741,9 +741,14 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                   className="flex-shrink-0 w-[280px] bg-white/5 border border-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/10 transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
-                    <span className="text-[10px] text-purple-400 px-2 py-0.5 bg-purple-400/10 rounded-full">
-                      {event.category}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs">
+                        {getSmartIcon(event.content, event.category).emoji}
+                      </span>
+                      <span className="text-[10px] text-purple-400 px-2 py-0.5 bg-purple-400/10 rounded-full">
+                        {event.category}
+                      </span>
+                    </div>
                     <span className="text-[10px] text-white/50">{formatDistance(event.distance)}</span>
                   </div>
                   <p className="text-xs text-white/90 leading-relaxed line-clamp-2 mb-2">
@@ -794,10 +799,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </button>
       )}
 
-      {/* Минималистичное окно события - только суть: 🔥 Искра • 5 км */}
+      {/* Ультра-узкое окно события - высота уменьшена в 2 раза, размытое матовое стекло */}
       <AnimatePresence>
         {selectedImpulse && status === 'ready' && !isSelectionMode && (
-          <div className="absolute bottom-0 left-0 right-0 p-3 z-[1000]">
+          <div className="absolute bottom-0 left-0 right-0 p-2 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
@@ -812,18 +817,18 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                   }
                 }
               }}
-              className="rounded-xl px-4 py-2.5 flex items-center gap-2"
+              className="rounded-xl px-3 py-1.5 flex items-center gap-2"
               style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                backdropFilter: 'blur(15px)',
-                WebkitBackdropFilter: 'blur(15px)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
               }}
             >
-              {/* Эмодзи категории + Название категории + Дистанция */}
+              {/* Интеллектуальная иконка на основе текста + Название категории + Дистанция */}
               <span className="text-sm">
-                {categoryEmojis[selectedImpulse.category] || '🔥'}
+                {getSmartIcon(selectedImpulse.content, selectedImpulse.category).emoji}
               </span>
               <span className="text-xs font-semibold text-gray-900 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
                   {selectedImpulse.category}

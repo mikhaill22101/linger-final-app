@@ -131,7 +131,7 @@ body {
 .map-container .leaflet-container {
   height: 100% !important;
   width: 100% !important;
-  filter: saturate(1.3) brightness(1.15) contrast(1.05); /* Увеличиваем насыщенность, яркость и контраст для яркого стиля с POI */
+  filter: saturate(1.4) brightness(1.05); /* Максимально яркие и сочные цвета: лазурная вода, насыщенная зелень */
 }
 
 /* Полностью скрываем кнопки масштаба карты */
@@ -144,9 +144,14 @@ body {
   display: none !important;
 }
 
-/* Скрываем атрибуцию (можно оставить, но сделаем минимальной) */
+/* Полностью скрываем атрибуцию (включая флаг Украины) */
 .map-container .leaflet-control-attribution {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
 }
 
 /* Анимация пульсации для маркера выбора */
@@ -190,16 +195,16 @@ body {
   overflow: hidden;
 }
 
-/* Анимация покачивания для категорий (tilt/swing) */
+/* Анимация покачивания для категорий (tilt/swing) - мягкое, едва заметное покачивание */
 @keyframes categoryTilt {
   0%, 100% {
     transform: rotate(0deg);
   }
   25% {
-    transform: rotate(4deg);
+    transform: rotate(2deg);
   }
   75% {
-    transform: rotate(-4deg);
+    transform: rotate(-2deg);
   }
 }
 

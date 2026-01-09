@@ -1,13 +1,21 @@
 import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon } from 'leaflet';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
 import { categoryColors } from './categoryColors';
+import { getSmartIcon } from './smartIcon';
 
 // Leaflet CSS подключен в src/index.css
 
-// Функция создания иконки маркера (яркие с градиентным свечением и эффектом левитации)
-function createMarkerIcon(color: string, isActive: boolean, isNearest: boolean = false, size: number = 20): DivIcon {
+// Функция создания иконки маркера (яркие с градиентным свечением, эффектом левитации и анимированной иконкой внутри)
+function createMarkerIcon(
+  color: string, 
+  isActive: boolean, 
+  isNearest: boolean = false, 
+  iconEmoji: string = '✨', 
+  size: number = 20,
+  animationType: 'swing' | 'pulse' | 'beat' | 'flicker' | 'none' = 'none'
+): DivIcon {
   // Маленькие маркеры по умолчанию, крупные только при клике
-  const baseSize = isActive ? size : 12; // 12px для обычных, 20px для активных
+  const baseSize = isActive ? size : 16; // 16px для обычных (чтобы поместилась иконка), 20px для активных
   const shadowSize = isActive ? 25 : 10;
   const activeClass = isActive ? 'marker-active active-glow' : '';
   const nearestClass = isNearest ? 'marker-nearest pulse-glow' : '';
@@ -16,8 +24,30 @@ function createMarkerIcon(color: string, isActive: boolean, isNearest: boolean =
   const glowColor = color;
   const glowIntensity = isActive ? 1.5 : 0.8;
   
+  // Размер иконки внутри маркера
+  const iconSize = isActive ? '14px' : '10px';
+  
+  // CSS анимация в зависимости от типа
+  let animationCSS = '';
+  switch (animationType) {
+    case 'swing':
+      animationCSS = 'animation: markerSwing 2s ease-in-out infinite;';
+      break;
+    case 'pulse':
+      animationCSS = 'animation: markerPulse 1.5s ease-in-out infinite;';
+      break;
+    case 'beat':
+      animationCSS = 'animation: markerBeat 1s ease-in-out infinite;';
+      break;
+    case 'flicker':
+      animationCSS = 'animation: markerFlicker 2s ease-in-out infinite;';
+      break;
+    default:
+      animationCSS = '';
+  }
+  
   return L.divIcon({
-    className: `custom-marker ${activeClass} ${nearestClass}`,
+    className: `custom-marker ${activeClass} ${nearestClass} marker-animated-${animationType}`,
     html: `
       <div class="${activeClass} ${nearestClass}" style="
         width: ${baseSize}px;
@@ -35,7 +65,18 @@ function createMarkerIcon(color: string, isActive: boolean, isNearest: boolean =
         cursor: pointer;
         transform: translateY(-2px);
         filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
-      "></div>
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <span style="
+          font-size: ${iconSize}; 
+          line-height: 1; 
+          filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+          display: inline-block;
+          ${animationCSS}
+        ">${iconEmoji}</span>
+      </div>
     `,
     iconSize: [baseSize, baseSize],
     iconAnchor: [baseSize / 2, baseSize / 2],
@@ -73,8 +114,9 @@ export const osmMapAdapter: MapAdapter = {
 
     // Добавляем стандартные тайлы OpenStreetMap с POI (магазины, рестораны и т.д.)
     // CSS фильтры увеличат яркость и насыщенность для сохранения яркого стиля
+    // Атрибуция отключена через CSS для скрытия флага Украины
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: '', // Пустая атрибуция, так как она скрыта через CSS
       maxZoom: 19,
     }).addTo(map);
 
@@ -114,12 +156,23 @@ export const osmMapAdapter: MapAdapter = {
           const isNearest = nearestEventId === impulse.id;
           const color = categoryColors[categoryName] || '#3498db';
           
-          const icon = createMarkerIcon(color, isActive, isNearest);
+          // Интеллектуальная иконка на основе текста события
+          const smartIconData = getSmartIcon(impulse.content, categoryName);
+          
+          const icon = createMarkerIcon(color, isActive, isNearest, smartIconData.emoji, 20, smartIconData.animationType);
           const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);
           
           marker.on('click', () => {
             if (currentOnClick) {
               currentOnClick(impulse);
+            }
+            // Тактильная отдача при клике на анимированный маркер
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+              } catch (e) {
+                // Игнорируем ошибки haptic feedback
+              }
             }
           });
           markers.push(marker);
