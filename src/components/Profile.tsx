@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trash2, Clock, X } from 'lucide-react';
+import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
 
 interface TelegramUser {
@@ -49,7 +49,14 @@ const Profile: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ id: number; user_id: number; text: string; created_at: string; profiles?: { full_name?: string } }>>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
-  const [fireRating, setFireRating] = useState<number>(0); // Рейтинг огоньков
+  const [chuniRating, setChuniRating] = useState<number>(0); // Рейтинг Чуни
+  const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string }>>([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+  const [selectedDirectChat, setSelectedDirectChat] = useState<number | null>(null); // ID друга для личного чата
+  const [directMessages, setDirectMessages] = useState<Array<{ id: number; sender_id: number; receiver_id: number; text: string; created_at: string; profiles?: { full_name?: string; avatar_url?: string } }>>([]);
+  const [newDirectMessage, setNewDirectMessage] = useState('');
+  const [isLoadingDirectChat, setIsLoadingDirectChat] = useState(false);
+  const directChatChannelRef = React.useRef<any>(null);
   const channelRef = React.useRef<any>(null);
 
   // Загрузка профиля из базы данных
@@ -208,8 +215,8 @@ const Profile: React.FC = () => {
             })
           );
           setMyImpulses(impulsesWithAddresses);
-          // Рейтинг огоньков = количество созданных событий
-          setFireRating(impulsesWithAddresses.length);
+          // Рейтинг Чуни = количество созданных событий
+          setChuniRating(impulsesWithAddresses.length);
         }
       } catch (err) {
         console.error('Failed to load my impulses:', err);
@@ -219,6 +226,60 @@ const Profile: React.FC = () => {
     };
 
     loadMyImpulses();
+  }, [profile.telegramId]);
+
+  // Загрузка списка друзей
+  useEffect(() => {
+    const loadFriends = async () => {
+      if (!profile.telegramId) return;
+
+      if (!isSupabaseConfigured) {
+        console.warn('⚠️ Supabase не настроен, пропускаем загрузку друзей');
+        setIsLoadingFriends(false);
+        return;
+      }
+
+      try {
+        setIsLoadingFriends(true);
+        // Загружаем друзей: где текущий пользователь либо user_id, либо friend_id
+        const { data, error } = await supabase
+          .from('friendships')
+          .select(`
+            id,
+            user_id,
+            friend_id,
+            profiles_user:user_id (id, full_name, avatar_url, username),
+            profiles_friend:friend_id (id, full_name, avatar_url, username)
+          `)
+          .or(`user_id.eq.${profile.telegramId},friend_id.eq.${profile.telegramId}`);
+
+        if (error) {
+          console.error('❌ Error loading friends from Supabase:', error);
+          setFriends([]);
+        } else {
+          // Преобразуем данные: для каждой дружбы берем профиль друга (не текущего пользователя)
+          const friendsList = (data || []).map((friendship: any) => {
+            const friendProfile = friendship.user_id === profile.telegramId 
+              ? friendship.profiles_friend 
+              : friendship.profiles_user;
+            return {
+              id: friendProfile?.id || (friendship.user_id === profile.telegramId ? friendship.friend_id : friendship.user_id),
+              full_name: friendProfile?.full_name,
+              avatar_url: friendProfile?.avatar_url,
+              username: friendProfile?.username,
+            };
+          }).filter((f: any) => f.id); // Убираем пустые записи
+          setFriends(friendsList);
+        }
+      } catch (err) {
+        console.error('Failed to load friends:', err);
+        setFriends([]);
+      } finally {
+        setIsLoadingFriends(false);
+      }
+    };
+
+    loadFriends();
   }, [profile.telegramId]);
 
   const handleDeleteImpulse = async (id: number) => {
@@ -506,6 +567,255 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Загрузка личного чата с другом
+  const loadDirectChat = async (friendId: number) => {
+    setIsLoadingDirectChat(true);
+    
+    if (!isSupabaseConfigured) {
+      console.warn('⚠️ Supabase не настроен, пропускаем загрузку личного чата');
+      setDirectMessages([]);
+      setIsLoadingDirectChat(false);
+      return;
+    }
+
+    if (directChatChannelRef.current) {
+      try {
+        await directChatChannelRef.current.unsubscribe();
+        directChatChannelRef.current = null;
+      } catch (e) {
+        console.warn('Error unsubscribing from previous direct chat channel:', e);
+      }
+    }
+
+    try {
+      const currentUserId = profile.telegramId;
+      if (!currentUserId) return;
+
+      // Загружаем сообщения где текущий пользователь либо отправитель, либо получатель
+      const { data, error } = await supabase
+        .from('direct_messages')
+        .select(`
+          id,
+          sender_id,
+          receiver_id,
+          text,
+          created_at,
+          profiles_sender:sender_id (full_name, avatar_url),
+          profiles_receiver:receiver_id (full_name, avatar_url)
+        `)
+        .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('❌ Error loading direct messages from Supabase:', error);
+        setDirectMessages([]);
+      } else {
+        const messages = (data || []).map((msg: any) => ({
+          id: msg.id,
+          sender_id: msg.sender_id,
+          receiver_id: msg.receiver_id,
+          text: msg.text,
+          created_at: msg.created_at,
+          profiles: msg.sender_id === currentUserId 
+            ? (Array.isArray(msg.profiles_sender) ? msg.profiles_sender[0] : msg.profiles_sender)
+            : (Array.isArray(msg.profiles_receiver) ? msg.profiles_receiver[0] : msg.profiles_receiver),
+        }));
+        setDirectMessages(messages);
+      }
+
+      // Realtime подписка для личных сообщений
+      const channel = supabase
+        .channel(`direct_messages:${currentUserId}:${friendId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'direct_messages',
+            filter: `or(and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId}))`,
+          },
+          async (payload) => {
+            console.log('[Realtime] Новое личное сообщение:', payload);
+            const { data: updatedData } = await supabase
+              .from('direct_messages')
+              .select(`
+                id,
+                sender_id,
+                receiver_id,
+                text,
+                created_at,
+                profiles_sender:sender_id (full_name, avatar_url),
+                profiles_receiver:receiver_id (full_name, avatar_url)
+              `)
+              .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${friendId}),and(sender_id.eq.${friendId},receiver_id.eq.${currentUserId})`)
+              .order('created_at', { ascending: true });
+            
+            if (updatedData) {
+              const messages = updatedData.map((msg: any) => ({
+                id: msg.id,
+                sender_id: msg.sender_id,
+                receiver_id: msg.receiver_id,
+                text: msg.text,
+                created_at: msg.created_at,
+                profiles: msg.sender_id === currentUserId 
+                  ? (Array.isArray(msg.profiles_sender) ? msg.profiles_sender[0] : msg.profiles_sender)
+                  : (Array.isArray(msg.profiles_receiver) ? msg.profiles_receiver[0] : msg.profiles_receiver),
+              }));
+              setDirectMessages(messages);
+              
+              // Haptic feedback при получении нового сообщения
+              if (window.Telegram?.WebApp?.HapticFeedback) {
+                try {
+                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                } catch (e) {
+                  console.warn('Haptic error:', e);
+                }
+              }
+              
+              setTimeout(() => {
+                const chatContainer = document.querySelector('[data-direct-chat-messages]');
+                if (chatContainer) {
+                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+              }, 100);
+            }
+          }
+        )
+        .subscribe();
+
+      directChatChannelRef.current = channel;
+    } catch (err) {
+      console.error('Failed to load direct chat messages:', err);
+      setDirectMessages([]);
+    } finally {
+      setIsLoadingDirectChat(false);
+    }
+  };
+
+  // Отправка личного сообщения
+  const sendDirectMessage = async (friendId: number) => {
+    if (!newDirectMessage.trim() || !profile.telegramId) return;
+
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('direct_messages')
+        .insert({
+          sender_id: profile.telegramId,
+          receiver_id: friendId,
+          text: newDirectMessage.trim(),
+          created_at: new Date().toISOString(),
+        });
+
+      if (error) {
+        console.error('❌ Error sending direct message:', error);
+        WebApp.showAlert('Ошибка при отправке сообщения');
+      } else {
+        setNewDirectMessage('');
+        // Перезагружаем сообщения
+        await loadDirectChat(friendId);
+        
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+          } catch (e) {
+            console.warn('Haptic error:', e);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to send direct message:', err);
+      WebApp.showAlert('Ошибка при отправке сообщения');
+    }
+  };
+
+  // Добавление/удаление друга
+  const handleToggleFriendship = async (friendId: number) => {
+    if (!profile.telegramId) return;
+
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
+
+    try {
+      // Проверяем, есть ли уже дружба
+      const { data: existingFriendship } = await supabase
+        .from('friendships')
+        .select('id')
+        .or(`and(user_id.eq.${profile.telegramId},friend_id.eq.${friendId}),and(user_id.eq.${friendId},friend_id.eq.${profile.telegramId})`)
+        .single();
+
+      if (existingFriendship) {
+        // Удаляем дружбу
+        const { error } = await supabase
+          .from('friendships')
+          .delete()
+          .eq('id', existingFriendship.id);
+
+        if (error) {
+          console.error('❌ Error removing friendship:', error);
+          WebApp.showAlert('Ошибка при удалении друга');
+        } else {
+          // Обновляем список друзей
+          setFriends(prev => prev.filter(f => f.id !== friendId));
+          if (window.Telegram?.WebApp?.HapticFeedback) {
+            try {
+              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+            } catch (e) {
+              console.warn('Haptic error:', e);
+            }
+          }
+        }
+      } else {
+        // Добавляем дружбу
+        const { error } = await supabase
+          .from('friendships')
+          .insert({
+            user_id: profile.telegramId,
+            friend_id: friendId,
+            created_at: new Date().toISOString(),
+          });
+
+        if (error) {
+          console.error('❌ Error adding friendship:', error);
+          WebApp.showAlert('Ошибка при добавлении друга');
+        } else {
+          // Перезагружаем список друзей
+          const { data: friendProfile } = await supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url, username')
+            .eq('id', friendId)
+            .single();
+
+          if (friendProfile) {
+            setFriends(prev => [...prev, {
+              id: friendProfile.id,
+              full_name: friendProfile.full_name,
+              avatar_url: friendProfile.avatar_url,
+              username: friendProfile.username,
+            }]);
+          }
+          
+          if (window.Telegram?.WebApp?.HapticFeedback) {
+            try {
+              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+            } catch (e) {
+              console.warn('Haptic error:', e);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle friendship:', err);
+      WebApp.showAlert('Ошибка при изменении статуса дружбы');
+    }
+  };
+
   // Cleanup при закрытии чата или размонтировании
   useEffect(() => {
     return () => {
@@ -517,8 +827,16 @@ const Profile: React.FC = () => {
           console.warn('Error unsubscribing from channel:', e);
         }
       }
+      if (directChatChannelRef.current) {
+        try {
+          directChatChannelRef.current.unsubscribe();
+          directChatChannelRef.current = null;
+        } catch (e) {
+          console.warn('Error unsubscribing from direct chat channel:', e);
+        }
+      }
     };
-  }, [selectedEventChat]);
+  }, [selectedEventChat, selectedDirectChat]);
 
   // Отправка сообщения в чат события
   const sendChatMessage = async (eventId: number) => {
@@ -768,11 +1086,14 @@ const Profile: React.FC = () => {
               </div>
             </div>
 
-            {/* Рейтинг огоньков */}
+            {/* Рейтинг Чуни */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl glass-card">
-              <span className="text-lg">🔥</span>
+              <Sparkles size={18} className="text-purple-400" />
               <span className="text-sm font-medium text-white/90">
-                {fireRating} {fireRating === 1 ? (window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' ? 'Огонек' : 'Fire') : (window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' ? 'Огоньков' : 'Fires')}
+                {(() => {
+                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                  return isRussian ? `Мои Чуни: ${chuniRating}` : `My Chuni: ${chuniRating}`;
+                })()}
               </span>
             </div>
 
@@ -807,6 +1128,78 @@ const Profile: React.FC = () => {
             <p className="mt-1 text-[10px] text-center text-white/40 leading-snug">
               Your profile is saved to Supabase database.
             </p>
+
+            {/* Раздел Друзья */}
+            <div className="mt-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium tracking-[0.2em] text-white/50 uppercase">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Друзья' : 'Friends';
+                  })()}
+                </p>
+                {friends.length > 0 && (
+                  <span className="text-[10px] text-white/40">
+                    {friends.length}
+                  </span>
+                )}
+              </div>
+
+              {isLoadingFriends ? (
+                <div className="text-center py-4 text-white/40 text-xs">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Загрузка...' : 'Loading...';
+                  })()}
+                </div>
+              ) : friends.length === 0 ? (
+                <div className="text-center py-4 text-white/40 text-xs">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Пока нет друзей' : 'No friends yet';
+                  })()}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {friends.map((friend) => (
+                    <motion.div
+                      key={friend.id}
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="flex flex-col items-center gap-2 cursor-pointer group"
+                      onClick={() => {
+                        setSelectedDirectChat(friend.id);
+                        loadDirectChat(friend.id);
+                        if (window.Telegram?.WebApp?.HapticFeedback) {
+                          try {
+                            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                          } catch (e) {
+                            console.warn('Haptic error:', e);
+                          }
+                        }
+                      }}
+                    >
+                      <div className="relative">
+                        {friend.avatar_url ? (
+                          <img 
+                            src={friend.avatar_url} 
+                            alt={friend.full_name || 'Friend'}
+                            className="w-12 h-12 rounded-full object-cover border-2 border-white/20 group-hover:border-purple-400/50 transition-colors"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                            {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-white/70 text-center max-w-[60px] truncate">
+                        {friend.full_name || friend.username || 'Friend'}
+                      </span>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Мои записи */}
             <div className="mt-6 space-y-3">
@@ -997,6 +1390,146 @@ const Profile: React.FC = () => {
             </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* Модальное окно личного чата */}
+      <AnimatePresence>
+        {selectedDirectChat && (() => {
+          const friend = friends.find(f => f.id === selectedDirectChat);
+          if (!friend) return null;
+          
+          return (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => {
+                  setSelectedDirectChat(null);
+                  setDirectMessages([]);
+                  setNewDirectMessage('');
+                }}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[2000]"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                onClick={(e) => e.stopPropagation()}
+                className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  {friend.avatar_url ? (
+                    <img 
+                      src={friend.avatar_url} 
+                      alt={friend.full_name || 'Friend'}
+                      className="w-10 h-10 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                      {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-semibold text-white truncate">
+                      {friend.full_name || friend.username || 'Friend'}
+                    </h3>
+                    {friend.username && (
+                      <p className="text-xs text-white/50">@{friend.username}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedDirectChat(null);
+                      setDirectMessages([]);
+                      setNewDirectMessage('');
+                    }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    <X size={20} className="text-white/60" />
+                  </button>
+                </div>
+
+                {/* Сообщения */}
+                <div 
+                  data-direct-chat-messages
+                  className="flex-1 overflow-y-auto space-y-3 mb-4 min-h-[200px] max-h-[400px]"
+                >
+                  {isLoadingDirectChat ? (
+                    <div className="text-center py-8 text-white/40 text-sm">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Загрузка...' : 'Loading...';
+                      })()}
+                    </div>
+                  ) : directMessages.length === 0 ? (
+                    <div className="text-center py-8 text-white/40 text-sm">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Пока нет сообщений' : 'No messages yet';
+                      })()}
+                    </div>
+                  ) : (
+                    directMessages.map((msg) => {
+                      const isMyMessage = msg.sender_id === profile.telegramId;
+                      return (
+                        <motion.div
+                          key={msg.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div
+                            className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                              isMyMessage
+                                ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white'
+                                : 'bg-white/10 text-white/90'
+                            }`}
+                          >
+                            <p className="text-sm leading-relaxed">{msg.text}</p>
+                            <p className={`text-[10px] mt-1 ${isMyMessage ? 'text-white/70' : 'text-white/50'}`}>
+                              {formatTime(msg.created_at)}
+                            </p>
+                          </div>
+                        </motion.div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Поле ввода */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newDirectMessage}
+                    onChange={(e) => setNewDirectMessage(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendDirectMessage(selectedDirectChat);
+                      }
+                    }}
+                    placeholder={(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Написать сообщение...' : 'Type a message...';
+                    })()}
+                    className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
+                  />
+                  <button
+                    onClick={() => sendDirectMessage(selectedDirectChat)}
+                    disabled={!newDirectMessage.trim()}
+                    className="px-4 py-3 rounded-2xl gradient-primary text-white text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Отправить' : 'Send';
+                    })()}
+                  </button>
+                </div>
+              </motion.div>
+            </>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Модальное окно чата события */}

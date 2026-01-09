@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, MessageCircle, UserPlus, UserMinus } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
@@ -129,6 +129,9 @@ function App() {
   const [eventTime, setEventTime] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedMapEvent, setSelectedMapEvent] = useState<any>(null); // Для скрытия таб-бара
+  const [selectedUserProfile, setSelectedUserProfile] = useState<{ id: number; name?: string; avatar?: string; username?: string } | null>(null); // Мини-карточка профиля
+  const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы для выбранного пользователя
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0); // Количество непрочитанных сообщений
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -182,12 +185,35 @@ function App() {
           console.warn('⚠️ Не удалось подключиться к Supabase');
         }
         
-    loadFeed();
+        loadFeed();
+        
+        // Загружаем количество непрочитанных сообщений
+        loadUnreadMessagesCount();
       })();
     } catch (e) {
       console.error('Error in App useEffect:', e);
     }
   }, []);
+
+  // Загрузка количества непрочитанных сообщений
+  const loadUnreadMessagesCount = async () => {
+    const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    if (!currentUserId || !isSupabaseConfigured) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('direct_messages')
+        .select('id', { count: 'exact' })
+        .eq('receiver_id', currentUserId)
+        .eq('read', false);
+
+      if (!error && data) {
+        setUnreadMessagesCount(data.length || 0);
+      }
+    } catch (err) {
+      console.error('Failed to load unread messages count:', err);
+    }
+  };
 
   const loadFeed = async () => {
     try {
@@ -729,8 +755,43 @@ function App() {
                               </motion.div>
                             )}
                             
-                            {/* Слева: Аватар + Имя */}
-                            <div className="flex items-center gap-3 flex-shrink-0">
+                            {/* Слева: Аватар + Имя (кликабельно) */}
+                            <div 
+                              className="flex items-center gap-3 flex-shrink-0 cursor-pointer"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (impulse.creator_id) {
+                                  setSelectedUserProfile({
+                                    id: impulse.creator_id,
+                                    name: impulse.author_name,
+                                    avatar: impulse.author_avatar,
+                                  });
+                                  
+                                  // Проверяем статус дружбы
+                                  const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+                                  if (currentUserId && isSupabaseConfigured) {
+                                    try {
+                                      const { data } = await supabase
+                                        .from('friendships')
+                                        .select('id')
+                                        .or(`and(user_id.eq.${currentUserId},friend_id.eq.${impulse.creator_id}),and(user_id.eq.${impulse.creator_id},friend_id.eq.${currentUserId})`)
+                                        .single();
+                                      setIsFriend(!!data);
+                                    } catch (e) {
+                                      setIsFriend(false);
+                                    }
+                                  }
+                                  
+                                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                                    try {
+                                      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                    } catch (e) {
+                                      console.warn('Haptic error:', e);
+                                    }
+                                  }
+                                }
+                              }}
+                            >
                               <div className="relative">
                                 {impulse.author_avatar ? (
                                   <img 
