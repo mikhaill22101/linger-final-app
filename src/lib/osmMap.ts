@@ -1,81 +1,194 @@
-import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon } from 'leaflet';
+import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon, LatLngBounds } from 'leaflet';
+import Supercluster from 'supercluster';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
 import { categoryColors } from './categoryColors';
 import { getSmartIcon } from './smartIcon';
 
 // Leaflet CSS подключен в src/index.css
 
-// Функция создания иконки маркера (яркие с градиентным свечением, эффектом левитации и анимированной иконкой внутри)
-function createMarkerIcon(
-  color: string, 
-  isActive: boolean, 
-  isNearest: boolean = false, 
-  iconEmoji: string = '✨', 
-  size: number = 20,
-  animationType: 'swing' | 'pulse' | 'beat' | 'flicker' | 'none' = 'none'
+// Интерфейс для точек кластеризации
+interface ClusterPoint {
+  type: 'Feature';
+  properties: {
+    cluster?: boolean;
+    cluster_id?: number;
+    point_count?: number;
+    point_count_abbreviated?: string;
+    category?: string;
+    impulse?: ImpulseLocation;
+  };
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number]; // [lng, lat]
+  };
+}
+
+// Функция создания иконки кластера (Glassmorphism стиль)
+function createClusterIcon(
+  pointCount: number,
+  dominantCategory?: string,
+  dominantColor?: string
 ): DivIcon {
-  // Маленькие маркеры по умолчанию, крупные только при клике
-  const baseSize = isActive ? size : 16; // 16px для обычных (чтобы поместилась иконка), 20px для активных
-  const shadowSize = isActive ? 25 : 10;
-  const activeClass = isActive ? 'marker-active active-glow' : '';
-  const nearestClass = isNearest ? 'marker-nearest pulse-glow' : '';
+  const size = Math.min(50 + pointCount * 3, 80); // Размер кластера зависит от количества точек
+  const iconSize = Math.max(16, Math.min(pointCount.toString().length * 8, 24));
   
-  // Градиентное свечение в зависимости от категории
-  const glowColor = color;
-  const glowIntensity = isActive ? 1.5 : 0.8;
-  
-  // Размер иконки внутри маркера
-  const iconSize = isActive ? '14px' : '10px';
-  
-  // CSS анимация в зависимости от типа
-  let animationCSS = '';
-  switch (animationType) {
-    case 'swing':
-      animationCSS = 'animation: markerSwing 2s ease-in-out infinite;';
-      break;
-    case 'pulse':
-      animationCSS = 'animation: markerPulse 1.5s ease-in-out infinite;';
-      break;
-    case 'beat':
-      animationCSS = 'animation: markerBeat 1s ease-in-out infinite;';
-      break;
-    case 'flicker':
-      animationCSS = 'animation: markerFlicker 2s ease-in-out infinite;';
-      break;
-    default:
-      animationCSS = '';
+  // Получаем иконку самой популярной категории
+  let categoryIcon = '📍';
+  if (dominantCategory) {
+    const iconData = getSmartIcon(dominantCategory);
+    categoryIcon = iconData.emoji;
   }
   
-  // Zenly Style: круглые маркеры с яркой заливкой, белой обводкой и мягкой тенью
   return L.divIcon({
-    className: `custom-marker zenly-marker ${activeClass} ${nearestClass} marker-animated-${animationType}`,
+    className: 'custom-cluster-marker',
     html: `
-      <div class="${activeClass} ${nearestClass}" style="
-        width: ${baseSize}px;
-        height: ${baseSize}px;
-        background: ${color};
-        border: ${isActive ? '3px solid white' : '2.5px solid white'};
+      <div class="cluster-container" style="
+        width: ${size}px;
+        height: ${size}px;
+        background: rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1.5px solid rgba(255, 255, 255, 0.4);
         border-radius: 50%;
-        box-shadow: 
-          0 2px 8px rgba(0, 0, 0, 0.15),
-          0 4px 16px rgba(0, 0, 0, 0.1),
-          0 0 0 1px rgba(255, 255, 255, 0.3);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        cursor: pointer;
-        transform: translateY(-2px);
-        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
         display: flex;
         align-items: center;
         justify-content: center;
+        position: relative;
+        animation: clusterPulse 2s ease-in-out infinite;
       ">
-        <span style="
-          font-size: ${iconSize}; 
-          line-height: 1; 
-          filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
-          display: inline-block;
-          ${animationCSS}
-        ">${iconEmoji}</span>
+        <!-- Фоновое изображение иконки категории (размытое) -->
+        ${dominantCategory ? `
+          <div style="
+            position: absolute;
+            font-size: ${size * 0.4}px;
+            opacity: 0.15;
+            filter: blur(2px);
+            z-index: 0;
+          ">${categoryIcon}</div>
+        ` : ''}
+        
+        <!-- Число событий в кластере -->
+        <div style="
+          font-size: ${iconSize}px;
+          font-weight: bold;
+          color: white;
+          text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+          z-index: 1;
+          position: relative;
+        ">${pointCount > 99 ? '99+' : pointCount}</div>
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+// Функция создания анимированного маркера события с эффектом пульсации
+function createPulseMarkerIcon(
+  color: string,
+  iconEmoji: string,
+  isActive: boolean = false,
+  animationType: 'swing' | 'pulse' | 'beat' | 'flicker' | 'none' = 'pulse'
+): DivIcon {
+  const baseSize = isActive ? 24 : 20;
+  const iconSize = isActive ? '14px' : '12px';
+  
+  // CSS анимация для иконки
+  let iconAnimationCSS = '';
+  switch (animationType) {
+    case 'swing':
+      iconAnimationCSS = 'animation: markerSwing 2s ease-in-out infinite;';
+      break;
+    case 'pulse':
+      iconAnimationCSS = 'animation: markerPulse 1.5s ease-in-out infinite;';
+      break;
+    case 'beat':
+      iconAnimationCSS = 'animation: markerBeat 1s ease-in-out infinite;';
+      break;
+    case 'flicker':
+      iconAnimationCSS = 'animation: markerFlicker 2s ease-in-out infinite;';
+      break;
+    default:
+      iconAnimationCSS = '';
+  }
+  
+  return L.divIcon({
+    className: `custom-pulse-marker ${isActive ? 'marker-active' : ''}`,
+    html: `
+      <div class="pulse-marker-container" style="
+        position: relative;
+        width: ${baseSize}px;
+        height: ${baseSize}px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        animation: markerFadeIn 0.5s ease-out;
+      ">
+        <!-- Расходящиеся круги пульсации -->
+        <div class="pulse-ring pulse-ring-1" style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: ${baseSize}px;
+          height: ${baseSize}px;
+          border: 2px solid ${color};
+          border-radius: 50%;
+          opacity: 0.6;
+          pointer-events: none;
+        "></div>
+        <div class="pulse-ring pulse-ring-2" style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: ${baseSize}px;
+          height: ${baseSize}px;
+          border: 2px solid ${color};
+          border-radius: 50%;
+          opacity: 0.4;
+          pointer-events: none;
+        "></div>
+        <div class="pulse-ring pulse-ring-3" style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: ${baseSize}px;
+          height: ${baseSize}px;
+          border: 2px solid ${color};
+          border-radius: 50%;
+          opacity: 0.2;
+          pointer-events: none;
+        "></div>
+        
+        <!-- Основной маркер -->
+        <div style="
+          width: ${baseSize}px;
+          height: ${baseSize}px;
+          background: ${color};
+          border: 2.5px solid white;
+          border-radius: 50%;
+          box-shadow: 
+            0 2px 8px rgba(0, 0, 0, 0.2),
+            0 4px 16px ${color}40;
+          position: relative;
+          z-index: 10;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        " class="marker-core">
+          <span style="
+            font-size: ${iconSize}; 
+            line-height: 1; 
+            filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+            display: inline-block;
+            ${iconAnimationCSS}
+          ">${iconEmoji}</span>
+        </div>
       </div>
     `,
     iconSize: [baseSize, baseSize],
@@ -90,11 +203,10 @@ export const osmMapAdapter: MapAdapter = {
       center: [center.lat, center.lng],
       zoom: zoom,
       zoomControl: false, // Убираем кнопки масштаба
-      doubleClickZoom: true, // Двойной клик для зума
-      scrollWheelZoom: true, // Колесико мыши для зума
-      touchZoom: true, // Жесты для зума на мобильных
+      doubleClickZoom: true,
+      scrollWheelZoom: true,
+      touchZoom: true,
     });
-
 
     // Haptic feedback при перемещении карты
     let moveTimeout: NodeJS.Timeout | null = null;
@@ -110,37 +222,281 @@ export const osmMapAdapter: MapAdapter = {
             // Игнорируем ошибки haptic feedback
           }
         }
-      }, 300); // Небольшая задержка, чтобы не спамить
+      }, 300);
     });
 
-    // Добавляем стандартные тайлы OpenStreetMap с POI (магазины, рестораны и т.д.)
-    // CSS фильтры увеличат яркость и насыщенность для сохранения яркого стиля
-    // Атрибуция отключена через CSS для скрытия флага Украины
-    // Настройки для четкости (retina display)
+    // Linger Map Style: пастельные сочные цвета (бирюзовая вода, салатовая зелень)
+    // Используем стандартные тайлы OSM, но с CSS фильтрами для пастельного сочного стиля
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '', // Пустая атрибуция, так как она скрыта через CSS
+      attribution: '', // Пустая атрибуция (скрыта через CSS)
       maxZoom: 19,
       tileSize: 256,
       zoomOffset: 0,
-      detectRetina: true, // Включаем поддержку Retina дисплеев для четкости
+      detectRetina: true,
       updateWhenZooming: true,
       updateWhenIdle: true,
       keepBuffer: 2,
     }).addTo(map);
 
-    let markers: LeafletMarker[] = [];
-    let currentActiveCategory: string | null = null;
+    // Инициализация Supercluster для кластеризации
+    const supercluster = new Supercluster({
+      radius: 60, // Радиус кластера в пикселях
+      maxZoom: 17, // Максимальный зум для кластеризации
+      minZoom: 0,
+      minPoints: 2, // Минимум 2 точки для кластера
+      extent: 512,
+      nodeSize: 64,
+    });
+
+    let markers: (LeafletMarker | L.LayerGroup)[] = [];
     let currentImpulses: ImpulseLocation[] = [];
     let currentOnClick: ((impulse: ImpulseLocation) => void) | null = null;
+    let currentActiveCategory: string | null = null;
+    let currentOnLongPress: ((impulse: ImpulseLocation) => void) | null = null;
     let selectionMarker: LeafletMarker | null = null;
     let locationSelectCallback: ((location: GeoLocation) => void) | null = null;
     let isSelectionMode = false;
-    let userLocationMarker: LeafletMarker | null = null; // Маркер локации пользователя
-    let currentUserLocation: GeoLocation | null = null; // Текущая локация пользователя
+    let userLocationMarker: LeafletMarker | null = null;
+    let currentUserLocation: GeoLocation | null = null;
+
+    // Функция обновления кластеров и маркеров
+    const updateClusters = () => {
+      // Удаляем старые маркеры
+      markers.forEach((m) => {
+        if (m instanceof L.LayerGroup) {
+          map.removeLayer(m);
+        } else {
+          m.remove();
+        }
+      });
+      markers = [];
+
+      // Фильтруем импульсы по категории
+      const filteredImpulses = currentActiveCategory
+        ? currentImpulses.filter(impulse => impulse.category === currentActiveCategory)
+        : currentImpulses;
+
+      if (filteredImpulses.length === 0) return;
+
+      // Преобразуем импульсы в точки для Supercluster
+      const points: ClusterPoint[] = filteredImpulses.map(impulse => ({
+        type: 'Feature',
+        properties: {
+          category: impulse.category,
+          impulse: impulse,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [impulse.location_lng, impulse.location_lat], // [lng, lat] для GeoJSON
+        },
+      }));
+
+      // Загружаем точки в Supercluster
+      supercluster.load(points);
+
+      // Получаем границы карты
+      const bounds = map.getBounds();
+      const bbox: [number, number, number, number] = [
+        bounds.getWest(),
+        bounds.getSouth(),
+        bounds.getEast(),
+        bounds.getNorth(),
+      ];
+
+      // Получаем кластеры и точки для текущего зума
+      const clusters = supercluster.getClusters(bbox, map.getZoom());
+
+      // Создаем маркеры для кластеров и точек
+      clusters.forEach((clusterPoint) => {
+        const [lng, lat] = clusterPoint.geometry.coordinates;
+        const properties = clusterPoint.properties;
+
+        if (properties.cluster) {
+          // Это кластер
+          const pointCount = properties.point_count || 0;
+          
+          // Определяем самую популярную категорию в кластере
+          const expandedPoints = supercluster.getLeaves(clusterPoint.id as number, Infinity);
+          const categoryCounts: Record<string, number> = {};
+          expandedPoints.forEach((point: any) => {
+            const category = point.properties.category || 'unknown';
+            categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+          });
+          
+          const dominantCategory = Object.entries(categoryCounts)
+            .sort(([, a], [, b]) => b - a)[0]?.[0];
+          const dominantColor = dominantCategory ? (categoryColors[dominantCategory] || '#3498db') : undefined;
+          
+          const clusterIcon = createClusterIcon(pointCount, dominantCategory, dominantColor);
+          const clusterMarker = L.marker([lat, lng], { icon: clusterIcon });
+          
+          // При клике на кластер - приближаемся (flyTo) до распада на отдельные маркеры
+          clusterMarker.on('click', () => {
+            const expansionZoom = Math.min(
+              supercluster.getClusterExpansionZoom(clusterPoint.id as number),
+              18
+            );
+            map.flyTo([lat, lng], expansionZoom, {
+              duration: 1.2,
+              easeLinearity: 0.25,
+            });
+            
+            // Haptic feedback
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+              } catch (e) {
+                // Игнорируем ошибки
+              }
+            }
+          });
+          
+          clusterMarker.addTo(map);
+          markers.push(clusterMarker);
+        } else {
+          // Это одиночная точка
+          const impulse = properties.impulse as ImpulseLocation;
+          if (!impulse) return;
+          
+          const color = categoryColors[impulse.category] || '#3498db';
+          const smartIconData = getSmartIcon(impulse.content, impulse.category);
+          const isActive = currentActiveCategory === impulse.category;
+          
+          const markerIcon = createPulseMarkerIcon(
+            color,
+            smartIconData.emoji,
+            isActive,
+            smartIconData.animationType
+          );
+          
+          const marker = L.marker([lat, lng], { icon: markerIcon });
+          
+          // Анимация появления при загрузке (fade-in + slide-up)
+          const markerElement = marker.getElement();
+          if (markerElement) {
+            markerElement.style.opacity = '0';
+            markerElement.style.transform = 'translateY(10px)';
+            setTimeout(() => {
+              markerElement.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+              markerElement.style.opacity = '1';
+              markerElement.style.transform = 'translateY(0)';
+            }, Math.random() * 200); // Небольшая случайная задержка для эффекта каскада
+          }
+          
+          // Обработка длительного нажатия
+          let longPressTimer: NodeJS.Timeout | null = null;
+          let isLongPress = false;
+          let clickHandled = false;
+          
+          const handleStart = () => {
+            isLongPress = false;
+            clickHandled = false;
+            longPressTimer = setTimeout(() => {
+              isLongPress = true;
+              clickHandled = true;
+              // Вызываем обработчик длительного нажатия, если есть
+              if (currentOnLongPress) {
+                currentOnLongPress(impulse);
+                // Haptic feedback при длительном нажатии
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                  try {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                  } catch (e) {
+                    // Игнорируем ошибки
+                  }
+                }
+              }
+            }, 600);
+          };
+          
+          const handleEnd = () => {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+          };
+          
+          // Обработка клика (только если не было длительного нажатия)
+          marker.on('click', () => {
+            if (!clickHandled && !isLongPress && currentOnClick) {
+              currentOnClick(impulse);
+              
+              // Haptic feedback
+              if (window.Telegram?.WebApp?.HapticFeedback) {
+                try {
+                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                } catch (e) {
+                  // Игнорируем ошибки
+                }
+              }
+            }
+            // Сбрасываем флаги после обработки клика
+            setTimeout(() => {
+              isLongPress = false;
+              clickHandled = false;
+            }, 100);
+          });
+          
+          marker.on('mousedown', handleStart);
+          marker.on('mouseup', handleEnd);
+          marker.on('mouseleave', handleEnd);
+          
+          // Для touch устройств
+          if (markerElement) {
+            markerElement.addEventListener('touchstart', handleStart, { passive: true });
+            markerElement.addEventListener('touchend', handleEnd, { passive: true });
+            markerElement.addEventListener('touchcancel', handleEnd, { passive: true });
+          }
+          
+          // Плавное увеличение при наведении/нажатии (scale 1.2)
+          if (markerElement) {
+            const markerCore = markerElement.querySelector('.marker-core') as HTMLElement;
+            
+            markerElement.addEventListener('mouseenter', () => {
+              if (markerCore) {
+                markerCore.style.transform = 'scale(1.2)';
+              }
+            });
+            
+            markerElement.addEventListener('mouseleave', () => {
+              if (markerCore) {
+                markerCore.style.transform = 'scale(1)';
+              }
+            });
+            
+            // Для touch устройств
+            markerElement.addEventListener('touchstart', () => {
+              if (markerCore) {
+                markerCore.style.transform = 'scale(1.2)';
+              }
+            }, { passive: true });
+            
+            markerElement.addEventListener('touchend', () => {
+              if (markerCore) {
+                markerCore.style.transform = 'scale(1)';
+              }
+            }, { passive: true });
+          }
+          
+          marker.addTo(map);
+          markers.push(marker);
+        }
+      });
+    };
+
+    // Обновляем кластеры при изменении зума и границ карты
+    map.on('zoomend', updateClusters);
+    map.on('moveend', updateClusters);
 
     const instance: MapInstance = {
       destroy() {
-        markers.forEach((m) => m.remove());
+        markers.forEach((m) => {
+          if (m instanceof L.LayerGroup) {
+            map.removeLayer(m);
+          } else {
+            m.remove();
+          }
+        });
         markers = [];
         if (userLocationMarker) {
           userLocationMarker.remove();
@@ -153,97 +509,18 @@ export const osmMapAdapter: MapAdapter = {
         map.remove();
       },
       setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) {
-        // Сохраняем данные
         currentImpulses = impulses;
         currentOnClick = onClick;
         currentActiveCategory = activeCategory || null;
-
-        // Фильтруем по категории, если выбрана
-        const filteredImpulses = currentActiveCategory
-          ? impulses.filter(impulse => impulse.category === currentActiveCategory)
-          : impulses;
-
-        // Удаляем старые маркеры
-        markers.forEach((m) => m.remove());
-        markers = [];
-
-        // Создаем новые маркеры
-        filteredImpulses.forEach((impulse) => {
-          const categoryName = impulse.category;
-          const isActive = currentActiveCategory === categoryName;
-          const isNearest = nearestEventId === impulse.id;
-          const color = categoryColors[categoryName] || '#3498db';
-          
-          // Интеллектуальная иконка на основе текста события
-          const smartIconData = getSmartIcon(impulse.content, categoryName);
-          
-          const icon = createMarkerIcon(color, isActive, isNearest, smartIconData.emoji, 20, smartIconData.animationType);
-          const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);
-          
-          // Обработка длительного нажатия (force touch / long press)
-          let longPressTimer: NodeJS.Timeout | null = null;
-          let isLongPress = false;
-          
-          const handleStart = (e: L.LeafletMouseEvent | L.LeafletEvent) => {
-            isLongPress = false;
-            longPressTimer = setTimeout(() => {
-              isLongPress = true;
-              if (onLongPress) {
-                onLongPress(impulse);
-                // Haptic feedback при длительном нажатии
-                if (window.Telegram?.WebApp?.HapticFeedback) {
-                  try {
-                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                  } catch (e) {
-                    // Игнорируем ошибки haptic feedback
-                  }
-                }
-              }
-            }, 600); // 600ms для определения длительного нажатия
-          };
-          
-          const handleEnd = () => {
-            if (longPressTimer) {
-              clearTimeout(longPressTimer);
-              longPressTimer = null;
-            }
-          };
-          
-          // Обработка обычного клика (только если не было длительного нажатия)
-          marker.on('click', () => {
-            if (!isLongPress && currentOnClick) {
-              currentOnClick(impulse);
-            }
-            isLongPress = false;
-          });
-          
-          // Обработка touch событий для длительного нажатия
-          marker.on('mousedown', handleStart);
-          marker.on('mouseup', handleEnd);
-          marker.on('mouseleave', handleEnd);
-          
-          // Для touch устройств
-          const markerElement = marker.getElement();
-          if (markerElement) {
-            markerElement.addEventListener('touchstart', (e) => {
-              handleStart(e as any);
-            });
-            markerElement.addEventListener('touchend', () => {
-              handleEnd();
-            });
-            markerElement.addEventListener('touchcancel', () => {
-              handleEnd();
-            });
-          }
-          
-          markers.push(marker);
-        });
+        currentOnLongPress = onLongPress || null;
+        
+        // Обновляем кластеры
+        updateClusters();
       },
       flyTo(location: GeoLocation, zoom: number = 15, duration: number = 1.8) {
-        // Zenly Style: плавный полет с кривой безье ease-in-out для максимальной плавности
         map.flyTo([location.lat, location.lng], zoom, {
-          duration: duration, // 1.8 секунды для эффекта "как в кино"
-          easeLinearity: 0.25, // Кривая безье для максимальной плавности (как в Zenly)
+          duration: duration,
+          easeLinearity: 0.25,
         });
       },
       getBounds() {
@@ -259,56 +536,57 @@ export const osmMapAdapter: MapAdapter = {
         return null;
       },
       invalidateSize() {
-        // Принудительный пересчет размеров карты Leaflet
         map.invalidateSize();
       },
       setUserLocation(location: GeoLocation | null) {
         currentUserLocation = location;
         
-        // Удаляем старый маркер локации пользователя
         if (userLocationMarker) {
           userLocationMarker.remove();
           userLocationMarker = null;
         }
         
-        // Если локация есть, создаем яркую синюю булавку
         if (location) {
+          // Улучшенный индикатор текущего местоположения (светящаяся синяя точка)
           const userLocationIcon = L.divIcon({
-            className: 'user-location-marker',
+            className: 'user-location-marker-linger',
             html: `
               <div style="
-                width: 20px;
-                height: 20px;
+                width: 24px;
+                height: 24px;
                 background: #3b82f6;
                 border: 3px solid white;
                 border-radius: 50%;
                 box-shadow: 
-                  0 0 0 4px rgba(59, 130, 246, 0.3),
-                  0 0 0 8px rgba(59, 130, 246, 0.2),
-                  0 4px 12px rgba(59, 130, 246, 0.6);
-                animation: userLocationPulse 2s ease-in-out infinite;
+                  0 0 0 6px rgba(59, 130, 246, 0.4),
+                  0 0 0 12px rgba(59, 130, 246, 0.25),
+                  0 0 0 18px rgba(59, 130, 246, 0.15),
+                  0 4px 16px rgba(59, 130, 246, 0.6);
+                animation: userLocationPulseLinger 2s ease-in-out infinite;
                 position: relative;
+                z-index: 2000;
               ">
                 <div style="
                   position: absolute;
                   top: 50%;
                   left: 50%;
                   transform: translate(-50%, -50%);
-                  width: 8px;
-                  height: 8px;
+                  width: 10px;
+                  height: 10px;
                   background: white;
                   border-radius: 50%;
+                  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
                 "></div>
               </div>
             `,
-            iconSize: [20, 20],
-            iconAnchor: [10, 10],
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
           });
           
-          userLocationMarker = L.marker([location.lat, location.lng], { 
+          userLocationMarker = L.marker([location.lat, location.lng], {
             icon: userLocationIcon,
-            interactive: false, // Не интерактивный маркер
-            zIndexOffset: 1000, // Всегда сверху
+            interactive: false,
+            zIndexOffset: 2000, // Всегда сверху всех маркеров и кластеров
           }).addTo(map);
         }
       },
@@ -317,18 +595,15 @@ export const osmMapAdapter: MapAdapter = {
         locationSelectCallback = enabled ? onSelect : null;
 
         if (enabled) {
-          // Включаем режим выбора
           map.doubleClickZoom.disable();
           map.on('click', (e) => {
             const { lat, lng } = e.latlng;
             const location: GeoLocation = { lat, lng };
 
-            // Удаляем предыдущий маркер выбора
             if (selectionMarker) {
               selectionMarker.remove();
             }
 
-            // Создаем новый маркер выбора (временный)
             const selectionIcon = L.divIcon({
               className: 'selection-marker',
               html: `
@@ -349,13 +624,11 @@ export const osmMapAdapter: MapAdapter = {
             selectionMarker = L.marker([lat, lng], { icon: selectionIcon }).addTo(map);
             map.flyTo([lat, lng], map.getZoom() > 15 ? map.getZoom() : 16);
 
-            // Вызываем коллбэк
             if (locationSelectCallback) {
               locationSelectCallback(location);
             }
           });
         } else {
-          // Отключаем режим выбора
           map.doubleClickZoom.enable();
           map.off('click');
           if (selectionMarker) {

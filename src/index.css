@@ -127,40 +127,46 @@ body {
   overflow: hidden !important;
 }
 
-/* Убеждаемся, что Leaflet карта имеет правильные размеры - Zenly Style */
+/* Linger Map Style: пастельные сочные цвета (бирюзовая вода, салатовая зелень) */
 .map-container .leaflet-container {
   height: 100% !important;
   width: 100% !important;
-  /* Zenly Style: максимально сочные и яркие цвета, трава салатовая, вода бирюзовая */
-  filter: saturate(1.5) contrast(1.1) brightness(1.05);
+  /* Пастельные сочные цвета - бирюзовая вода, салатовая зелень */
+  filter: saturate(1.7) brightness(1.1) contrast(1.05);
 }
 
-/* Стилизация элементов карты в стиле Zenly */
+/* Стилизация элементов карты в стиле Linger Map */
 .map-container .leaflet-container .leaflet-tile-container img {
-  /* Усиливаем яркость травы и воды через CSS для Zenly-стиля */
-  filter: saturate(1.4) brightness(1.05) contrast(1.05);
+  /* Пастельные сочные цвета - бирюзовая вода, салатовая зелень */
+  filter: saturate(1.7) brightness(1.1) contrast(1.05);
+  /* Убираем лишние детали для максимальной чистоты (только контуры и парки) */
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
 
-/* Анимация пульсации для локации пользователя */
-@keyframes userLocationPulse {
+/* Анимация пульсации для локации пользователя (Linger Map Style) */
+@keyframes userLocationPulseLinger {
   0%, 100% {
     box-shadow: 
-      0 0 0 4px rgba(59, 130, 246, 0.3),
-      0 0 0 8px rgba(59, 130, 246, 0.2),
-      0 4px 12px rgba(59, 130, 246, 0.6);
+      0 0 0 6px rgba(59, 130, 246, 0.4),
+      0 0 0 12px rgba(59, 130, 246, 0.25),
+      0 0 0 18px rgba(59, 130, 246, 0.15),
+      0 4px 16px rgba(59, 130, 246, 0.6);
     transform: scale(1);
   }
   50% {
     box-shadow: 
-      0 0 0 8px rgba(59, 130, 246, 0.4),
-      0 0 0 16px rgba(59, 130, 246, 0.2),
-      0 4px 16px rgba(59, 130, 246, 0.8);
-    transform: scale(1.1);
+      0 0 0 12px rgba(59, 130, 246, 0.5),
+      0 0 0 24px rgba(59, 130, 246, 0.3),
+      0 0 0 36px rgba(59, 130, 246, 0.15),
+      0 4px 20px rgba(59, 130, 246, 0.8);
+    transform: scale(1.05);
   }
 }
 
-.user-location-marker {
-  animation: userLocationPulse 2s ease-in-out infinite;
+.user-location-marker-linger {
+  animation: userLocationPulseLinger 2s ease-in-out infinite;
+  z-index: 2000 !important;
 }
 
 /* Полностью скрываем кнопки масштаба карты */
@@ -197,6 +203,167 @@ body {
 
 .selection-marker div {
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Анимация пульсации для кластера */
+@keyframes clusterPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.cluster-container {
+  animation: clusterPulse 2s ease-in-out infinite;
+}
+
+/* Анимация расходящихся кругов для пульсирующих маркеров */
+.pulse-ring {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.pulse-ring-1 {
+  animation: pulseRing 2s ease-out infinite;
+  animation-delay: 0s;
+}
+
+.pulse-ring-2 {
+  animation: pulseRing 2s ease-out infinite;
+  animation-delay: 0.66s;
+}
+
+.pulse-ring-3 {
+  animation: pulseRing 2s ease-out infinite;
+  animation-delay: 1.33s;
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.6;
+    border-width: 2px;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(3);
+    opacity: 0;
+    border-width: 1px;
+  }
+}
+
+/* Анимация появления маркеров (fade-in + slide-up) */
+@keyframes markerFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pulse-marker-container {
+  animation: markerFadeIn 0.5s ease-out;
+}
+
+/* Анимации для маркеров (swing, pulse, beat, flicker) */
+@keyframes markerSwing {
+  0%, 100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes markerPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.9;
+  }
+}
+
+@keyframes markerBeat {
+  0%, 100% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.2);
+  }
+  50% {
+    transform: scale(1);
+  }
+  75% {
+    transform: scale(1.15);
+  }
+}
+
+@keyframes markerFlicker {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  25% {
+    opacity: 0.7;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  75% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+}
+
+.marker-animated-swing {
+  animation: markerSwing 2s ease-in-out infinite;
+}
+
+.marker-animated-pulse {
+  animation: markerPulse 1.5s ease-in-out infinite;
+}
+
+.marker-animated-beat {
+  animation: markerBeat 1s ease-in-out infinite;
+}
+
+.marker-animated-flicker {
+  animation: markerFlicker 2s ease-in-out infinite;
+}
+
+/* Стили для активного маркера */
+.marker-active .marker-core {
+  transform: scale(1.2);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 8px 24px currentColor;
+}
+
+/* Стили для пульсирующих колец внутри маркера */
+.pulse-marker-container {
+  position: relative;
+}
+
+.pulse-marker-container .pulse-ring {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  border-width: 2px;
+  border-style: solid;
 }
 
 /* Скрытие скроллбара для виджета близлежащих событий */

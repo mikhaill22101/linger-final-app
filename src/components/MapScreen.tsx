@@ -72,11 +72,11 @@ function getUserLocation(): Promise<GeoLocation> {
 }
 
 // Функция расчета расстояния между двумя точками (Haversine formula)
-function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371; // Радиус Земли в километрах
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = 
+  const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLng / 2) * Math.sin(dLng / 2);
@@ -85,14 +85,15 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
 }
 
 // Форматирование относительного времени ("Опубликовано X назад")
-function formatRelativeTime(dateString: string): string {
+export function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+  const lang = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code;
+  const isRussian = !lang || lang === 'ru';
 
   if (diffMins < 1) {
     return isRussian ? 'Только что' : 'Just now';
@@ -103,25 +104,26 @@ function formatRelativeTime(dateString: string): string {
   } else if (diffDays < 7) {
     return isRussian ? `${diffDays} дн назад` : `${diffDays} days ago`;
   } else {
-    return isRussian 
+    return isRussian
       ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
       : date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
   }
 }
 
 // Форматирование даты и времени начала события ("Начало: Дата в Время")
-function formatEventDateTime(eventDate?: string, eventTime?: string): string | null {
+export function formatEventDateTime(eventDate?: string, eventTime?: string): string | null {
   if (!eventDate || !eventTime) return null;
-  
-  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+  const lang = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code;
+  const isRussian = !lang || lang === 'ru';
   const date = new Date(eventDate);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const eventDateOnly = new Date(date);
   eventDateOnly.setHours(0, 0, 0, 0);
-  
+
   const isToday = eventDateOnly.getTime() === today.getTime();
-  
+
   if (isToday) {
     return isRussian ? `Начало: Сегодня в ${eventTime}` : `Start: Today at ${eventTime}`;
   } else {
@@ -133,7 +135,7 @@ function formatEventDateTime(eventDate?: string, eventTime?: string): string | n
 }
 
 // Функция форматирования расстояния
-function formatDistance(km: number): string {
+export function formatDistance(km: number): string {
   if (km === Infinity || isNaN(km)) return '';
   if (km < 1) {
     return `${Math.round(km * 1000)} м`;
