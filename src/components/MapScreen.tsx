@@ -67,6 +67,19 @@ function getUserLocation(): Promise<GeoLocation> {
   });
 }
 
+// Функция расчета расстояния между двумя точками (Haversine formula)
+function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371; // Радиус Земли в километрах
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Расстояние в километрах
+}
+
 // Функция форматирования времени
 function formatTime(dateString: string): string {
   const date = new Date(dateString);
@@ -81,6 +94,14 @@ function formatTime(dateString: string): string {
   if (hours < 24) return `${hours} ч назад`;
   if (days < 7) return `${days} дн назад`;
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// Функция форматирования расстояния
+function formatDistance(km: number): string {
+  if (km < 1) {
+    return `${Math.round(km * 1000)} м`;
+  }
+  return `${km.toFixed(1)} км`;
 }
 
 // Функция получения адреса (вызывается по требованию)
@@ -189,15 +210,19 @@ interface MapScreenProps {
   activeCategory?: string | null;
   onCategoryChange?: (category: string | null) => void;
   refreshTrigger?: number; // При изменении этого значения карта обновляет данные
+  isSelectionMode?: boolean; // Режим выбора точки на карте
+  onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
   const [selectedImpulse, setSelectedImpulse] = useState<ImpulseLocation | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [impulses, setImpulses] = useState<ImpulseLocation[]>([]);
+  const [nearbyEvents, setNearbyEvents] = useState<Array<ImpulseLocation & { distance: number }>>([]);
+  const [userLocation, setUserLocation] = useState<GeoLocation | null>(null);
   const loadingTimeoutRef = useRef<number | null>(null);
   const initAttemptedRef = useRef(false);
   const addressCacheRef = useRef<Map<string, string>>(new Map());
@@ -244,18 +269,19 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
             console.log('[MapScreen] Начало инициализации карты...');
             
             // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
-            const userLocation = await getUserLocation();
-            const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
+            const currentUserLocation = await getUserLocation();
+            setUserLocation(currentUserLocation);
+            const isDefaultLocation = currentUserLocation.lat === DEFAULT_LOCATION.lat && currentUserLocation.lng === DEFAULT_LOCATION.lng;
             const zoom = isDefaultLocation ? 13 : 15;
 
-            console.log('[MapScreen] Создание карты:', userLocation, 'zoom:', zoom);
+            console.log('[MapScreen] Создание карты:', currentUserLocation, 'zoom:', zoom);
             
             if (!mapRef.current) {
               throw new Error('mapRef.current is null перед инициализацией');
             }
 
             // Инициализируем карту
-            const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
+            const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, zoom);
             mapInstanceRef.current = map;
 
             // ПРИНУДИТЕЛЬНЫЙ Resize для Leaflet (сразу после создания)
@@ -272,7 +298,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
             // Плавное перемещение к локации (только для резервной локации)
             if (isDefaultLocation) {
               setTimeout(() => {
-                map.flyTo(userLocation, zoom);
+                map.flyTo(currentUserLocation, zoom);
               }, 200);
             }
 
@@ -285,6 +311,23 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
             
             // Отображаем маркеры БЫСТРО (без адресов)
             if (loadedImpulses.length > 0) {
+              // Рассчитываем близлежащие события
+              if (currentUserLocation) {
+                const eventsWithDistance = loadedImpulses
+                  .map(impulse => ({
+                    ...impulse,
+                    distance: calculateDistance(
+                      currentUserLocation.lat,
+                      currentUserLocation.lng,
+                      impulse.location_lat,
+                      impulse.location_lng
+                    ),
+                  }))
+                  .sort((a, b) => a.distance - b.distance)
+                  .slice(0, 3); // Только 3 ближайших
+                setNearbyEvents(eventsWithDistance);
+              }
+
               map.setMarkers(loadedImpulses, async (impulse) => {
                 // Загружаем адрес при клике, если его еще нет
                 let impulseWithAddress = impulse;
@@ -350,7 +393,24 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
         const loadedImpulses = await loadImpulses();
         setImpulses(loadedImpulses);
         
-        if (mapInstanceRef.current && loadedImpulses.length > 0) {
+        // Обновляем близлежащие события
+        if (userLocation) {
+          const eventsWithDistance = loadedImpulses
+            .map(impulse => ({
+              ...impulse,
+              distance: calculateDistance(
+                userLocation.lat,
+                userLocation.lng,
+                impulse.location_lat,
+                impulse.location_lng
+              ),
+            }))
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 3);
+          setNearbyEvents(eventsWithDistance);
+        }
+        
+        if (mapInstanceRef.current && loadedImpulses.length > 0 && !isSelectionMode) {
           mapInstanceRef.current.setMarkers(loadedImpulses, async (impulse) => {
             let impulseWithAddress = impulse;
             if (!impulse.address) {
@@ -381,11 +441,32 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
       };
       reloadData();
     }
-  }, [refreshTrigger, status, activeCategory]);
+  }, [refreshTrigger, status, activeCategory, userLocation, isSelectionMode]);
+
+  // Обработчик режима выбора точки на карте
+  useEffect(() => {
+    if (mapInstanceRef.current && status === 'ready' && mapInstanceRef.current.setLocationSelectMode) {
+      mapInstanceRef.current.setLocationSelectMode(
+        isSelectionMode || false,
+        (location: GeoLocation) => {
+          if (onLocationSelected) {
+            onLocationSelected(location);
+          }
+          if (window.Telegram?.WebApp?.HapticFeedback) {
+            try {
+              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+            } catch (e) {
+              console.warn('[MapScreen] Haptic error:', e);
+            }
+          }
+        }
+      );
+    }
+  }, [isSelectionMode, status, onLocationSelected]);
 
   // Обновляем маркеры при изменении активной категории
   useEffect(() => {
-    if (mapInstanceRef.current && impulses.length > 0 && status === 'ready') {
+    if (mapInstanceRef.current && impulses.length > 0 && status === 'ready' && !isSelectionMode) {
       mapInstanceRef.current.setMarkers(impulses, async (impulse) => {
         // Загружаем адрес при клике, если его еще нет
         let impulseWithAddress = impulse;
@@ -415,7 +496,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
         }
       }, activeCategory || null);
     }
-  }, [activeCategory, impulses, status]);
+  }, [activeCategory, impulses, status, isSelectionMode]);
 
   // Cleanup
   useEffect(() => {
@@ -447,12 +528,13 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
         if (mapRef.current) {
           const initMap = async () => {
             try {
-              const userLocation = await getUserLocation();
-              const isDefaultLocation = userLocation.lat === DEFAULT_LOCATION.lat && userLocation.lng === DEFAULT_LOCATION.lng;
+              const currentUserLocation = await getUserLocation();
+              setUserLocation(currentUserLocation);
+              const isDefaultLocation = currentUserLocation.lat === DEFAULT_LOCATION.lat && currentUserLocation.lng === DEFAULT_LOCATION.lng;
               const zoom = isDefaultLocation ? 13 : 15;
 
               if (mapRef.current) {
-                const map = await osmMapAdapter.initMap(mapRef.current, userLocation, zoom);
+                const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, zoom);
                 mapInstanceRef.current = map;
 
                 // Принудительный Resize
@@ -467,12 +549,29 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
 
                 if (isDefaultLocation) {
                   setTimeout(() => {
-                    map.flyTo(userLocation, zoom);
+                    map.flyTo(currentUserLocation, zoom);
                   }, 200);
                 }
 
                 const loadedImpulses = await loadImpulses();
                 setImpulses(loadedImpulses);
+                
+                // Обновляем близлежащие события
+                if (userLocation) {
+                  const eventsWithDistance = loadedImpulses
+                    .map(impulse => ({
+                      ...impulse,
+                      distance: calculateDistance(
+                        userLocation.lat,
+                        userLocation.lng,
+                        impulse.location_lat,
+                        impulse.location_lng
+                      ),
+                    }))
+                    .sort((a, b) => a.distance - b.distance)
+                    .slice(0, 3);
+                  setNearbyEvents(eventsWithDistance);
+                }
                 
                 if (loadedImpulses.length > 0) {
                   map.setMarkers(loadedImpulses, async (impulse) => {
@@ -573,9 +672,72 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger })
         </div>
       )}
       
+      {/* Индикатор режима выбора точки */}
+      {isSelectionMode && status === 'ready' && (
+        <div className="absolute top-4 left-4 right-4 z-[1000]">
+          <div className="bg-blue-500/90 backdrop-blur-xl border border-blue-400/50 rounded-2xl p-4 text-center">
+            <p className="text-white text-sm font-medium">
+              Кликните на карте, чтобы выбрать место
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Виджет близлежащих событий */}
+      {!isSelectionMode && !selectedImpulse && status === 'ready' && nearbyEvents.length > 0 && (
+        <div className="absolute bottom-4 left-0 right-0 z-[900] px-4">
+          <div className="bg-black/90 backdrop-blur-xl border border-white/20 rounded-2xl p-3">
+            <h3 className="text-xs text-white/70 mb-2 px-2">Ближайшие события</h3>
+            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+              {nearbyEvents.map((event) => (
+                <motion.div
+                  key={event.id}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  onClick={() => {
+                    if (mapInstanceRef.current) {
+                      mapInstanceRef.current.flyTo(
+                        { lat: event.location_lat, lng: event.location_lng },
+                        15
+                      );
+                      setSelectedImpulse(event);
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {}
+                      }
+                    }
+                  }}
+                  className="flex-shrink-0 w-[280px] bg-white/5 border border-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/10 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <span className="text-[10px] text-purple-400 px-2 py-0.5 bg-purple-400/10 rounded-full">
+                      {event.category}
+                    </span>
+                    <span className="text-[10px] text-white/50">{formatDistance(event.distance)}</span>
+                  </div>
+                  <p className="text-xs text-white/90 leading-relaxed line-clamp-2 mb-2">
+                    {event.content}
+                  </p>
+                  {event.created_at && (
+                    <div className="flex items-center gap-1 text-[10px] text-white/50">
+                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                        <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                        <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                      </svg>
+                      <span>{formatTime(event.created_at)}</span>
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Баллун с детальной информацией об импульсе */}
       <AnimatePresence>
-        {selectedImpulse && status === 'ready' && (
+        {selectedImpulse && status === 'ready' && !isSelectionMode && (
           <div className="absolute bottom-0 left-0 right-0 p-4 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}

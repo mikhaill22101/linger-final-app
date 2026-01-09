@@ -117,6 +117,7 @@ function App() {
   const [eventCoords, setEventCoords] = useState<[number, number] | null>(null);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const [mapRefreshTrigger, setMapRefreshTrigger] = useState(0);
+  const [isMapSelectionMode, setIsMapSelectionMode] = useState(false); // Режим выбора точки на карте
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -133,19 +134,61 @@ function App() {
   const loadFeed = async () => {
     try {
       setIsLoadingFeed(true);
+      // Исправленный запрос: используем impulses напрямую, а не представление
       const { data, error } = await supabase
-        .from('impulse_with_author')
-        .select('*')
+        .from('impulses')
+        .select(`
+          id,
+          content,
+          category,
+          creator_id,
+          created_at,
+          location_lat,
+          location_lng,
+          profiles:creator_id (
+            full_name
+          )
+        `)
         .order('created_at', { ascending: false })
         .limit(20);
 
       if (error) {
         console.error('Error loading feed:', error);
+        // Пробуем альтернативный запрос
+        const { data: altData, error: altError } = await supabase
+          .from('impulses')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(20);
+        
+        if (altError) {
+          console.error('Error loading feed (alt):', altError);
+          setFeed([]);
+        } else {
+          // Обрабатываем данные без join
+          const processedFeed = (altData || []).map((item: any) => ({
+            ...item,
+            author_name: undefined, // Загрузим отдельно если нужно
+          }));
+          setFeed(processedFeed);
+        }
       } else {
-        setFeed(data || []);
+        // Обрабатываем данные с join
+        const processedFeed = (data || []).map((item: any) => ({
+          id: item.id,
+          content: item.content,
+          category: item.category,
+          creator_id: item.creator_id,
+          created_at: item.created_at,
+          location_lat: item.location_lat,
+          location_lng: item.location_lng,
+          author_name: item.profiles?.full_name || undefined,
+        }));
+        setFeed(processedFeed);
       }
     } catch (err) {
       console.error('Failed to load feed:', err);
+      setFeed([]);
     } finally {
       setIsLoadingFeed(false);
     }
@@ -293,9 +336,9 @@ function App() {
       return;
     }
 
-    // Если на шаге выбора места, проверяем адрес
-    if (step === 'location' && !eventCoords) {
-      WebApp.showAlert(isRussian ? 'Пожалуйста, укажите адрес' : 'Please specify an address');
+    // Если на шаге выбора места, проверяем координаты или адрес
+    if (step === 'location' && !eventCoords && !eventAddress.trim() && !isMapSelectionMode) {
+      WebApp.showAlert(isRussian ? 'Пожалуйста, укажите адрес или выберите место на карте' : 'Please specify an address or select location on map');
       return;
     }
 
@@ -487,6 +530,45 @@ function App() {
             activeCategory={activeCategory} 
             onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
+            isSelectionMode={isMapSelectionMode}
+            onLocationSelected={async (location) => {
+              const coords: [number, number] = [location.lat, location.lng];
+              setEventCoords(coords);
+              setIsMapSelectionMode(false);
+              
+              // Загружаем адрес для выбранной точки через обратное геокодирование
+              try {
+                const response = await fetch(
+                  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.lat}&lon=${location.lng}&zoom=18&addressdetails=1`,
+                  {
+                    headers: {
+                      'User-Agent': 'LingerApp/1.0',
+                    },
+                  }
+                );
+                const data = await response.json();
+                if (data.display_name) {
+                  setEventAddress(data.display_name);
+                }
+              } catch (error) {
+                console.warn('[onLocationSelected] Ошибка получения адреса:', error);
+                setEventAddress(`${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`);
+              }
+              
+              // Возвращаемся к модальному окну
+              setActiveTab('home');
+              setTimeout(() => {
+                setModalOpen(true);
+              }, 300);
+              
+              if (window.Telegram?.WebApp?.HapticFeedback) {
+                try {
+                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                } catch (e) {
+                  console.warn('Haptic error:', e);
+                }
+              }
+            }}
           />
         )}
       </div>
@@ -566,19 +648,20 @@ function App() {
                     <label className="block text-sm text-white/70 mb-2">
                       {isRussian ? 'Адрес события' : 'Event Address'}
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 mb-3">
                       <input
                         type="text"
                         value={eventAddress}
                         onChange={(e) => setEventAddress(e.target.value)}
                         onBlur={(e) => {
-                          if (e.target.value.trim()) {
+                          if (e.target.value.trim() && !isMapSelectionMode) {
                             handleAddressSearch(e.target.value);
                           }
                         }}
                         placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
                         className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
-                        autoFocus
+                        disabled={isMapSelectionMode}
+                        autoFocus={!isMapSelectionMode}
                       />
                       {isSearchingAddress && (
                         <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
@@ -586,17 +669,44 @@ function App() {
                         </div>
                       )}
                     </div>
+                    {isMapSelectionMode && (
+                      <div className="mb-3 p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-300">
+                        {isRussian ? 'Кликните на карте, чтобы выбрать место' : 'Click on the map to select location'}
+                      </div>
+                    )}
+                    {!isMapSelectionMode && (
+                      <button
+                        onClick={() => {
+                          setIsMapSelectionMode(true);
+                          setActiveTab('map');
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }}
+                        className="w-full mb-3 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <MapPin size={16} />
+                        {isRussian ? 'Указать на карте вручную' : 'Select on map manually'}
+                      </button>
+                    )}
                     {eventCoords && (
                       <p className="mt-2 text-xs text-green-400 flex items-center gap-1">
                         <MapPin size={12} />
-                        {isRussian ? 'Адрес найден!' : 'Address found!'}
+                        {isRussian ? 'Место выбрано!' : 'Location selected!'}
                       </p>
                     )}
                   </div>
 
                   <div className="flex gap-3">
                     <button
-                      onClick={() => setStep('description')}
+                      onClick={() => {
+                        setStep('description');
+                        setIsMapSelectionMode(false);
+                      }}
                       disabled={isSubmitting}
                       className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
                     >
@@ -604,7 +714,7 @@ function App() {
                     </button>
                     <button
                       onClick={handleSendMessage}
-                      disabled={isSubmitting || !eventCoords}
+                      disabled={isSubmitting || (!eventCoords && !isMapSelectionMode)}
                       className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isSubmitting 
@@ -612,6 +722,23 @@ function App() {
                         : (isRussian ? 'Создать событие' : 'Create Event')
                       }
                     </button>
+                    {isMapSelectionMode && (
+                      <button
+                        onClick={() => {
+                          setIsMapSelectionMode(false);
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }}
+                        className="w-full mt-2 rounded-2xl bg-white/5 border border-white/20 py-2 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
+                      >
+                        {isRussian ? 'Отменить выбор на карте' : 'Cancel map selection'}
+                      </button>
+                    )}
                   </div>
                 </>
               )}

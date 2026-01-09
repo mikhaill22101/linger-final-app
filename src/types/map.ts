@@ -23,6 +23,7 @@ export interface MapInstance {
   flyTo: (location: GeoLocation, zoom?: number) => void;
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
   invalidateSize?: () => void;
+  setLocationSelectMode?: (enabled: boolean, onSelect: (location: GeoLocation) => void) => void;
 }
 
 export interface MapAdapter {

@@ -49,6 +49,9 @@ export const osmMapAdapter: MapAdapter = {
     let currentActiveCategory: string | null = null;
     let currentImpulses: ImpulseLocation[] = [];
     let currentOnClick: ((impulse: ImpulseLocation) => void) | null = null;
+    let selectionMarker: LeafletMarker | null = null;
+    let locationSelectCallback: ((location: GeoLocation) => void) | null = null;
+    let isSelectionMode = false;
 
     const instance: MapInstance = {
       destroy() {
@@ -109,6 +112,59 @@ export const osmMapAdapter: MapAdapter = {
       invalidateSize() {
         // Принудительный пересчет размеров карты Leaflet
         map.invalidateSize();
+      },
+      setLocationSelectMode(enabled: boolean, onSelect: (location: GeoLocation) => void) {
+        isSelectionMode = enabled;
+        locationSelectCallback = enabled ? onSelect : null;
+
+        if (enabled) {
+          // Включаем режим выбора
+          map.doubleClickZoom.disable();
+          map.on('click', (e) => {
+            const { lat, lng } = e.latlng;
+            const location: GeoLocation = { lat, lng };
+
+            // Удаляем предыдущий маркер выбора
+            if (selectionMarker) {
+              selectionMarker.remove();
+            }
+
+            // Создаем новый маркер выбора (временный)
+            const selectionIcon = L.divIcon({
+              className: 'selection-marker',
+              html: `
+                <div style="
+                  width: 24px;
+                  height: 24px;
+                  background-color: #f44336;
+                  border: 3px solid white;
+                  border-radius: 50%;
+                  box-shadow: 0 0 20px rgba(244, 67, 54, 0.8);
+                  animation: pulse 1.5s ease-in-out infinite;
+                "></div>
+              `,
+              iconSize: [24, 24],
+              iconAnchor: [12, 12],
+            });
+
+            selectionMarker = L.marker([lat, lng], { icon: selectionIcon }).addTo(map);
+            map.flyTo([lat, lng], map.getZoom() > 15 ? map.getZoom() : 15);
+
+            // Вызываем коллбэк
+            if (locationSelectCallback) {
+              locationSelectCallback(location);
+            }
+          });
+        } else {
+          // Отключаем режим выбора
+          map.doubleClickZoom.enable();
+          map.off('click');
+          if (selectionMarker) {
+            selectionMarker.remove();
+            selectionMarker = null;
+          }
+          locationSelectCallback = null;
+        }
       },
     };
 
