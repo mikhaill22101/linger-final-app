@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -130,6 +130,8 @@ function App() {
   const [eventTime, setEventTime] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0); // Количество непрочитанных сообщений
+  const [selectedUserProfile, setSelectedUserProfile] = useState<{ id: number; name?: string; avatar?: string; username?: string } | null>(null); // Выбранный профиль пользователя
+  const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы с выбранным пользователем
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -185,7 +187,8 @@ function App() {
           console.warn('⚠️ Не удалось подключиться к Supabase');
         }
         
-    loadFeed();
+        // Загружаем ленту сразу (даже без геолокации, расстояния будут пересчитаны позже)
+        loadFeed();
         
         // Загружаем количество непрочитанных сообщений
         loadUnreadMessagesCount();
@@ -194,6 +197,13 @@ function App() {
       console.error('Error in App useEffect:', e);
     }
   }, []);
+
+  // Перезагружаем ленту, когда userLocation становится доступным (для правильного расчета расстояний)
+  useEffect(() => {
+    if (userLocation && isSupabaseConfigured) {
+      loadFeed();
+    }
+  }, [userLocation]);
 
   // Загрузка количества непрочитанных сообщений
   const loadUnreadMessagesCount = async () => {
@@ -779,7 +789,17 @@ function App() {
                             
                             {/* Слева: Аватар + Имя (кликабельно) */}
                             <div 
-                              className="flex items-center gap-3 flex-shrink-0"
+                              className="flex items-center gap-3 flex-shrink-0 cursor-pointer"
+                              onClick={() => {
+                                if (impulse.creator_id) {
+                                  handleUserProfileClick(
+                                    impulse.creator_id,
+                                    impulse.author_name,
+                                    impulse.author_avatar,
+                                    undefined
+                                  );
+                                }
+                              }}
                             >
                               <div className="relative">
                                 {impulse.author_avatar ? (
@@ -878,7 +898,6 @@ function App() {
           <MapScreen 
             key={activeTab} 
             activeCategory={activeCategory} 
-            onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
             onBack={() => {
               setActiveTab('home');
@@ -980,10 +999,10 @@ function App() {
                       {isRussian ? 'Выберите дату и время события' : 'Select event date and time'}
                     </label>
                     
-                    {/* Поля для даты и времени */}
-                    <div className="grid grid-cols-2 gap-3 mb-4">
+                    {/* Поля для даты и времени - компактный layout */}
+                    <div className="space-y-3 mb-4">
                       <div>
-                        <label className="block text-xs text-white/60 mb-1">
+                        <label className="block text-xs text-white/60 mb-1.5 font-medium">
                           {isRussian ? 'Дата' : 'Date'}
                         </label>
                         <input
@@ -991,24 +1010,24 @@ function App() {
                           value={eventDate}
                           onChange={(e) => setEventDate(e.target.value)}
                           min={new Date().toISOString().split('T')[0]}
-                          className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-4 py-3"
+                          className="w-full rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-3 py-2.5"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-white/60 mb-1">
+                        <label className="block text-xs text-white/60 mb-1.5 font-medium">
                           {isRussian ? 'Время' : 'Time'}
                         </label>
                         <input
                           type="time"
                           value={eventTime}
                           onChange={(e) => setEventTime(e.target.value)}
-                          className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-4 py-3"
+                          className="w-full rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-3 py-2.5"
                         />
                       </div>
                     </div>
 
                     {/* Плавающая кнопка выбора адреса (Pin Button) */}
-                    <div className="relative mb-4">
+                    <div className="relative mb-4 pb-16">
                       <label className="block text-sm text-white/70 mb-2">
                         {isRussian ? 'Выбор места' : 'Select location'}
                       </label>
@@ -1109,7 +1128,7 @@ function App() {
                             </div>
                           </div>
 
-                          {/* Floating Pin Button - справа внизу */}
+                          {/* Floating Pin Button - абсолютное позиционирование внутри контейнера */}
                           <button
                             type="button"
                             onClick={() => {
@@ -1122,12 +1141,12 @@ function App() {
                                 }
                               }
                             }}
-                            className="fixed bottom-24 right-6 w-14 h-14 rounded-full bg-white border-2 border-white/30 shadow-lg flex items-center justify-center z-[60] hover:scale-110 transition-transform"
+                            className="absolute bottom-4 right-4 w-12 h-12 rounded-full bg-white border-2 border-white/30 shadow-lg flex items-center justify-center z-[100] hover:scale-110 transition-transform"
                             style={{
                               boxShadow: '0 0 20px rgba(255, 255, 255, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3)',
                             }}
                           >
-                            <MapPin size={24} className="text-black" />
+                            <MapPin size={20} className="text-black" />
                           </button>
                         </div>
                       )}
@@ -1217,6 +1236,87 @@ function App() {
         </div>
       </nav>
       )}
+
+      {/* Модальное окно профиля пользователя */}
+      <AnimatePresence>
+        {selectedUserProfile && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedUserProfile(null)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">
+                  {isRussian ? 'Профиль' : 'Profile'}
+                </h3>
+                <button
+                  onClick={() => setSelectedUserProfile(null)}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={20} className="text-white/70" />
+                </button>
+              </div>
+
+              {/* Аватар и имя */}
+              <div className="flex flex-col items-center gap-3 mb-6">
+                {selectedUserProfile.avatar ? (
+                  <img
+                    src={selectedUserProfile.avatar}
+                    alt={selectedUserProfile.name || 'User'}
+                    className="w-20 h-20 rounded-full object-cover border-2 border-white/20"
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-2xl font-bold">
+                    {(selectedUserProfile.name || selectedUserProfile.username || 'U')[0].toUpperCase()}
+                  </div>
+                )}
+                <div className="text-center">
+                  <p className="text-lg font-semibold text-white">
+                    {selectedUserProfile.name || selectedUserProfile.username || 'User'}
+                  </p>
+                  {selectedUserProfile.username && selectedUserProfile.name && (
+                    <p className="text-sm text-white/50">@{selectedUserProfile.username}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Кнопка добавить в друзья */}
+              <button
+                onClick={async () => {
+                  await handleToggleFriendship(selectedUserProfile.id);
+                }}
+                className={`w-full rounded-xl py-3 px-4 font-semibold transition-all flex items-center justify-center gap-2 ${
+                  isFriend
+                    ? 'bg-white/10 text-white/70 hover:bg-white/20'
+                    : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white hover:opacity-90'
+                }`}
+              >
+                {isFriend ? (
+                  <>
+                    <UserMinus size={18} />
+                    {isRussian ? 'Удалить из друзей' : 'Remove Friend'}
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={18} />
+                    {isRussian ? 'Добавить в друзья' : 'Add Friend'}
+                  </>
+                )}
+              </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

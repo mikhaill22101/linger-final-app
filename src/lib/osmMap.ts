@@ -95,6 +95,7 @@ export const osmMapAdapter: MapAdapter = {
       touchZoom: true, // Жесты для зума на мобильных
     });
 
+
     // Haptic feedback при перемещении карты
     let moveTimeout: NodeJS.Timeout | null = null;
     map.on('moveend', () => {
@@ -115,9 +116,16 @@ export const osmMapAdapter: MapAdapter = {
     // Добавляем стандартные тайлы OpenStreetMap с POI (магазины, рестораны и т.д.)
     // CSS фильтры увеличат яркость и насыщенность для сохранения яркого стиля
     // Атрибуция отключена через CSS для скрытия флага Украины
+    // Настройки для четкости (retina display)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '', // Пустая атрибуция, так как она скрыта через CSS
       maxZoom: 19,
+      tileSize: 256,
+      zoomOffset: 0,
+      detectRetina: true, // Включаем поддержку Retina дисплеев для четкости
+      updateWhenZooming: true,
+      updateWhenIdle: true,
+      keepBuffer: 2,
     }).addTo(map);
 
     let markers: LeafletMarker[] = [];

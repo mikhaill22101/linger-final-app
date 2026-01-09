@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, MapPin, X } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
@@ -219,16 +219,14 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
 
 interface MapScreenProps {
   activeCategory?: string | null;
-  onCategoryChange?: (category: string | null) => void;
   refreshTrigger?: number; // При изменении этого значения карта обновляет данные
   isSelectionMode?: boolean; // Режим выбора точки на карте
   onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
   onEventSelected?: (impulse: ImpulseLocation | null) => void; // Коллбэк при выборе события (для скрытия таб-бара)
   onBack?: () => void; // Коллбэк для возврата на главную
-  onNavigateToFeed?: () => void; // Коллбэк для перехода на экран "Все события"
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, onNavigateToFeed }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -237,6 +235,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
   const [impulses, setImpulses] = useState<ImpulseLocation[]>([]);
   const [nearbyEvents, setNearbyEvents] = useState<Array<ImpulseLocation & { distance: number }>>([]);
   const [userLocation, setUserLocation] = useState<GeoLocation | null>(null);
+  const [isEventDetailOpen, setIsEventDetailOpen] = useState(false); // Детальное окно события
+  const [lastClickedImpulseId, setLastClickedImpulseId] = useState<number | null>(null); // ID последнего кликнутого события
   const loadingTimeoutRef = useRef<number | null>(null);
   const initAttemptedRef = useRef(false);
   const addressCacheRef = useRef<Map<string, string>>(new Map());
@@ -373,18 +373,43 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                   }
                 }
                 
-                setSelectedImpulse(impulseWithAddress);
-                
-                // Вибрация при клике на маркер (selectionChanged для переключения между событиями)
-                if (window.Telegram?.WebApp?.HapticFeedback) {
-                  try {
-                    window.Telegram.WebApp.HapticFeedback.selectionChanged();
-                  } catch (e) {
-                    // Fallback на impactOccurred если selectionChanged не поддерживается
+                // Логика двух кликов:
+                // 1. Первый клик - фокус на событии (увеличение маркера, flyTo, показ карточки)
+                // 2. Второй клик на то же событие - открытие детального окна
+                if (lastClickedImpulseId === impulse.id && selectedImpulse?.id === impulse.id) {
+                  // Второй клик - открываем детальное окно
+                  setIsEventDetailOpen(true);
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
                     try {
                       window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                    } catch (e2) {
-                      console.warn('[MapScreen] Haptic error:', e2);
+                    } catch (e) {
+                      console.warn('[MapScreen] Haptic error:', e);
+                    }
+                  }
+                } else {
+                  // Первый клик - фокус на событии
+                  setSelectedImpulse(impulseWithAddress);
+                  setLastClickedImpulseId(impulse.id);
+                  
+                  // Увеличиваем маркер и фокусируемся на событии
+                  if (mapInstanceRef.current && impulse.location_lat && impulse.location_lng) {
+                    mapInstanceRef.current.flyTo(
+                      { lat: impulse.location_lat, lng: impulse.location_lng },
+                      16, // Увеличенный zoom для фокуса
+                      0.8 // Быстрая анимация
+                    );
+                  }
+                  
+                  // Вибрация при клике на маркер
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.selectionChanged();
+                    } catch (e) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                      } catch (e2) {
+                        console.warn('[MapScreen] Haptic error:', e2);
+                      }
                     }
                   }
                 }
@@ -833,8 +858,9 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 }
               }}
               onClick={() => {
-                // Мгновенный переход на экран "Все события" при клике на любое место окна
-                if (onNavigateToFeed) {
+                // Второй клик на карточку - открываем детальное окно события
+                if (selectedImpulse) {
+                  setIsEventDetailOpen(true);
                   if (window.Telegram?.WebApp?.HapticFeedback) {
                     try {
                       window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
@@ -842,7 +868,6 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                       console.warn('[MapScreen] Haptic error:', e);
                     }
                   }
-                  onNavigateToFeed();
                 }
               }}
               className="rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-white/10 transition-all active:scale-95"
@@ -877,6 +902,136 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               )}
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Детальное окно события */}
+      <AnimatePresence>
+        {isEventDetailOpen && selectedImpulse && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setIsEventDetailOpen(false);
+                setLastClickedImpulseId(null);
+              }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">
+                    {getSmartIcon(selectedImpulse.content, selectedImpulse.category).emoji}
+                  </span>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">
+                      {selectedImpulse.category}
+                    </h3>
+                    {selectedImpulse.author_name && (
+                      <p className="text-sm text-white/60">
+                        {selectedImpulse.author_name}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsEventDetailOpen(false);
+                    setLastClickedImpulseId(null);
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={20} className="text-white/70" />
+                </button>
+              </div>
+
+              {/* Описание события */}
+              <div className="mb-4">
+                <p className="text-sm text-white/90 leading-relaxed">
+                  {selectedImpulse.content}
+                </p>
+              </div>
+
+              {/* Адрес */}
+              {selectedImpulse.address && (
+                <div className="mb-4 flex items-start gap-2">
+                  <svg width="16" height="16" viewBox="0 0 12 12" fill="none" className="text-white/60 mt-0.5 flex-shrink-0">
+                    <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
+                    <circle cx="6" cy="4" r="1" fill="currentColor"/>
+                  </svg>
+                  <p className="text-sm text-white/70 flex-1">
+                    {selectedImpulse.address}
+                  </p>
+                </div>
+              )}
+
+              {/* Дата и время */}
+              {selectedImpulse.created_at && (
+                <div className="mb-4 flex items-center gap-2">
+                  <svg width="16" height="16" viewBox="0 0 12 12" fill="none" className="text-white/60">
+                    <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                    <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                  <p className="text-sm text-white/70">
+                    {formatTime(selectedImpulse.created_at)}
+                  </p>
+                </div>
+              )}
+
+              {/* Дистанция */}
+              {userLocation && selectedImpulse.location_lat && selectedImpulse.location_lng && (
+                <div className="mb-6 flex items-center gap-2">
+                  <svg width="16" height="16" viewBox="0 0 12 12" fill="none" className="text-white/60">
+                    <path d="M6 1L2 5h3v5h2V5h3L6 1z" stroke="currentColor" strokeWidth="1" fill="none"/>
+                  </svg>
+                  <p className="text-sm text-white/70">
+                    {formatDistance(calculateDistance(
+                      userLocation.lat,
+                      userLocation.lng,
+                      selectedImpulse.location_lat,
+                      selectedImpulse.location_lng
+                    ))}
+                  </p>
+                </div>
+              )}
+
+              {/* Кнопка "Перейти к точке" */}
+              <button
+                onClick={() => {
+                  if (mapInstanceRef.current && selectedImpulse.location_lat && selectedImpulse.location_lng) {
+                    mapInstanceRef.current.flyTo(
+                      { lat: selectedImpulse.location_lat, lng: selectedImpulse.location_lng },
+                      17,
+                      1.0
+                    );
+                    setIsEventDetailOpen(false);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {
+                        console.warn('[MapScreen] Haptic error:', e);
+                      }
+                    }
+                  }
+                }}
+                className="w-full rounded-xl py-3 px-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+              >
+                <MapPin size={18} />
+                {(() => {
+                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                  return isRussian ? 'Перейти к точке' : 'Go to Point';
+                })()}
+              </button>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>

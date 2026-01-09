@@ -1,4 +1,5 @@
-export type MapProvider = '2gis' | 'osm';
+// Тип провайдера карты (в текущей версии используется только OSM)
+export type MapProvider = 'osm';
 
 export interface GeoLocation {
   lat: number;

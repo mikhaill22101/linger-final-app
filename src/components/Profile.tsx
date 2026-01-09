@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle } from 'lucide-react';
+import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
 
 interface TelegramUser {
@@ -44,7 +44,7 @@ const Profile: React.FC = () => {
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedEventChat, setSelectedEventChat] = useState<MyImpulse | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{ id: number; user_id: number; text: string; created_at: string; profiles?: { full_name?: string } }>>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -56,8 +56,12 @@ const Profile: React.FC = () => {
   const [directMessages, setDirectMessages] = useState<Array<{ id: number; sender_id: number; receiver_id: number; text: string; created_at: string; profiles?: { full_name?: string; avatar_url?: string } }>>([]);
   const [newDirectMessage, setNewDirectMessage] = useState('');
   const [isLoadingDirectChat, setIsLoadingDirectChat] = useState(false);
-  const directChatChannelRef = React.useRef<any>(null);
-  const channelRef = React.useRef<any>(null);
+  const directChatChannelRef = useRef<any>(null);
+  const channelRef = useRef<any>(null);
+  const [isSearchFriendsOpen, setIsSearchFriendsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   // Загрузка профиля из базы данных
   useEffect(() => {
@@ -730,6 +734,54 @@ const Profile: React.FC = () => {
     } catch (err) {
       console.error('Failed to send direct message:', err);
       WebApp.showAlert('Ошибка при отправке сообщения');
+    }
+  };
+
+  // Поиск друзей
+  const searchFriends = async (query: string) => {
+    if (!query.trim() || !profile.telegramId) {
+      setSearchResults([]);
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
+
+    try {
+      setIsSearching(true);
+      
+      // Ищем пользователей по имени или username
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url, username')
+        .or(`full_name.ilike.%${query}%,username.ilike.%${query}%`)
+        .neq('id', profile.telegramId) // Исключаем текущего пользователя
+        .limit(20);
+
+      if (error) {
+        console.error('❌ Error searching friends:', error);
+        setSearchResults([]);
+        return;
+      }
+
+      // Проверяем, кто уже в друзьях
+      const friendIds = friends.map(f => f.id);
+      const resultsWithStatus = (data || []).map((user: any) => ({
+        id: user.id,
+        full_name: user.full_name,
+        avatar_url: user.avatar_url,
+        username: user.username,
+        isFriend: friendIds.includes(user.id),
+      }));
+
+      setSearchResults(resultsWithStatus);
+    } catch (err) {
+      console.error('Failed to search friends:', err);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
     }
   };
 
@@ -1685,6 +1737,189 @@ const Profile: React.FC = () => {
                     <path d="M18 2L9 11M18 2l-7 7M18 2H12l7 7v-6z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Модальное окно поиска друзей */}
+      <AnimatePresence>
+        {isSearchFriendsOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSearchFriendsOpen(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Поиск друзей' : 'Search Friends';
+                  })()}
+                </h3>
+                <button
+                  onClick={() => {
+                    setIsSearchFriendsOpen(false);
+                    setSearchQuery('');
+                    setSearchResults([]);
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={20} className="text-white/70" />
+                </button>
+              </div>
+
+              {/* Поле поиска */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    searchFriends(e.target.value);
+                  }}
+                  placeholder={(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Поиск по имени или username...' : 'Search by name or username...';
+                  })()}
+                  className="w-full rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-10 py-3"
+                  autoFocus
+                />
+              </div>
+
+              {/* Результаты поиска */}
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {isSearching ? (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Поиск...' : 'Searching...';
+                    })()}
+                  </div>
+                ) : searchResults.length === 0 && searchQuery.trim() ? (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Ничего не найдено' : 'No results found';
+                    })()}
+                  </div>
+                ) : searchResults.length > 0 ? (
+                  searchResults.map((user) => (
+                    <motion.div
+                      key={user.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                    >
+                      <div className="relative">
+                        {user.avatar_url ? (
+                          <img
+                            src={user.avatar_url}
+                            alt={user.full_name || user.username || 'User'}
+                            className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                            {(user.full_name || user.username || 'U')[0].toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">
+                          {user.full_name || user.username || 'User'}
+                        </p>
+                        {user.username && user.full_name && (
+                          <p className="text-xs text-white/50 truncate">@{user.username}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await handleToggleFriendship(user.id);
+                          // Обновляем статус в результатах поиска
+                          setSearchResults(prev => prev.map(u => 
+                            u.id === user.id ? { ...u, isFriend: !u.isFriend } : u
+                          ));
+                          // Перезагружаем список друзей
+                          const loadFriends = async () => {
+                            if (!profile.telegramId) return;
+                            if (!isSupabaseConfigured) return;
+                            try {
+                              const { data, error } = await supabase
+                                .from('friendships')
+                                .select(`
+                                  id,
+                                  user_id,
+                                  friend_id,
+                                  profiles_user:user_id (id, full_name, avatar_url, username),
+                                  profiles_friend:friend_id (id, full_name, avatar_url, username)
+                                `)
+                                .or(`user_id.eq.${profile.telegramId},friend_id.eq.${profile.telegramId}`);
+                              if (!error && data) {
+                                const friendsList = (data || []).map((friendship: any) => {
+                                  const friendProfile = friendship.user_id === profile.telegramId 
+                                    ? friendship.profiles_friend 
+                                    : friendship.profiles_user;
+                                  return {
+                                    id: friendProfile?.id || (friendship.user_id === profile.telegramId ? friendship.friend_id : friendship.user_id),
+                                    full_name: friendProfile?.full_name,
+                                    avatar_url: friendProfile?.avatar_url,
+                                    username: friendProfile?.username,
+                                  };
+                                }).filter((f: any) => f.id);
+                                setFriends(friendsList);
+                              }
+                            } catch (err) {
+                              console.error('Failed to reload friends:', err);
+                            }
+                          };
+                          loadFriends();
+                        }}
+                        className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                          user.isFriend
+                            ? 'bg-white/10 text-white/70 hover:bg-white/20'
+                            : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white hover:opacity-90'
+                        }`}
+                      >
+                        {user.isFriend ? (
+                          <>
+                            <UserMinus size={14} className="inline mr-1" />
+                            {(() => {
+                              const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                              return isRussian ? 'Удалить' : 'Remove';
+                            })()}
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={14} className="inline mr-1" />
+                            {(() => {
+                              const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                              return isRussian ? 'Добавить' : 'Add';
+                            })()}
+                          </>
+                        )}
+                      </button>
+                    </motion.div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Введите имя или username для поиска' : 'Enter name or username to search';
+                    })()}
+                  </div>
+                )}
               </div>
             </motion.div>
           </>
