@@ -20,7 +20,7 @@ export interface MapInstance {
   destroy: () => void;
   setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void, activeCategory?: string | null, nearestEventId?: number) => void;
   setActiveCategory?: (category: string | null) => void;
-  flyTo: (location: GeoLocation, zoom?: number) => void;
+  flyTo: (location: GeoLocation, zoom?: number, duration?: number) => void;
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
   invalidateSize?: () => void;
   setLocationSelectMode?: (enabled: boolean, onSelect: (location: GeoLocation) => void) => void;

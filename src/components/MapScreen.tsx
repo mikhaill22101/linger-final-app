@@ -284,16 +284,17 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             const currentUserLocation = await getUserLocation();
             setUserLocation(currentUserLocation);
             const isDefaultLocation = currentUserLocation.lat === DEFAULT_LOCATION.lat && currentUserLocation.lng === DEFAULT_LOCATION.lng;
-            const zoom = isDefaultLocation ? 13 : 15;
+            const finalZoom = isDefaultLocation ? 13 : 15;
+            const initialZoom = 2.5; // Начальный zoom для эффекта полета (как в Zenly)
 
-            console.log('[MapScreen] Создание карты:', currentUserLocation, 'zoom:', zoom);
+            console.log('[MapScreen] Создание карты:', currentUserLocation, 'final zoom:', finalZoom);
             
             if (!mapRef.current) {
               throw new Error('mapRef.current is null перед инициализацией');
             }
 
-            // Инициализируем карту
-            const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, zoom);
+            // Инициализируем карту с большим zoom для эффекта полета
+            const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, initialZoom);
             mapInstanceRef.current = map;
 
             // ПРИНУДИТЕЛЬНЫЙ Resize для Leaflet (сразу после создания)
@@ -307,12 +308,24 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         }, 100);
             }
 
-            // Плавное перемещение к локации (только для резервной локации)
-            if (isDefaultLocation) {
-              setTimeout(() => {
-                map.flyTo(currentUserLocation, zoom);
-              }, 200);
-            }
+            // Эффект плавного полета камеры (Zenly Style): от большого zoom к текущей позиции
+            setTimeout(() => {
+              if (mapInstanceRef.current) {
+                // Плавный полет к текущей позиции с финальным zoom за 1.8 секунды
+                mapInstanceRef.current.flyTo(currentUserLocation, finalZoom);
+                
+                // Haptic feedback при завершении "приземления" камеры
+                setTimeout(() => {
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    } catch (e) {
+                      console.warn('[MapScreen] Haptic error:', e);
+                    }
+                  }
+                }, 1800); // Через 1.8 секунды (время анимации flyTo)
+              }
+            }, 300); // Небольшая задержка перед началом полета
 
             // Загружаем данные из Supabase после отрисовки карты
             console.log('[MapScreen] Загрузка импульсов из Supabase...');

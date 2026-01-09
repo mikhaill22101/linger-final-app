@@ -178,10 +178,11 @@ export const osmMapAdapter: MapAdapter = {
           markers.push(marker);
         });
       },
-      flyTo(location: GeoLocation, zoom: number = 15) {
+      flyTo(location: GeoLocation, zoom: number = 15, duration: number = 1.8) {
+        // Zenly Style: плавный полет с кривой безье ease-in-out для максимальной плавности
         map.flyTo([location.lat, location.lng], zoom, {
-          duration: 1.0,
-          easeLinearity: 0.25,
+          duration: duration, // 1.8 секунды для эффекта "как в кино"
+          easeLinearity: 0.25, // Кривая безье для максимальной плавности (как в Zenly)
         });
       },
       getBounds() {

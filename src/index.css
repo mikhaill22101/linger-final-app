@@ -131,8 +131,8 @@ body {
 .map-container .leaflet-container {
   height: 100% !important;
   width: 100% !important;
-  /* Zenly Style: яркие, насыщенные цвета с мягкостью и чистотой */
-  filter: saturate(1.5) contrast(1.1) brightness(1.05);
+  /* Zenly Style: максимально сочные и яркие цвета, трава салатовая, вода бирюзовая */
+  filter: saturate(1.6) brightness(1.1) contrast(1.05);
 }
 
 /* Стилизация элементов карты в стиле Zenly */
