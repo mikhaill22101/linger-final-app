@@ -217,6 +217,15 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
   }
 }
 
+interface Friend {
+  id: number;
+  full_name?: string;
+  avatar_url?: string;
+  username?: string;
+  location_lat?: number;
+  location_lng?: number;
+}
+
 interface MapScreenProps {
   activeCategory?: string | null;
   refreshTrigger?: number; // При изменении этого значения карта обновляет данные
@@ -226,9 +235,12 @@ interface MapScreenProps {
   onBack?: () => void; // Коллбэк для возврата на главную
   isBackground?: boolean; // Режим фона (для главной страницы)
   onEventLongPress?: (impulse: ImpulseLocation) => void; // Коллбэк при длительном нажатии на событие
+  showFriends?: boolean; // Режим отображения друзей
+  friends?: Friend[]; // Список друзей для отображения
+  onFriendsNearby?: (friendIds: number[]) => void; // Коллбэк когда друзья рядом
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress, showFriends = false, friends = [], onFriendsNearby }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -242,6 +254,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
   const loadingTimeoutRef = useRef<number | null>(null);
   const initAttemptedRef = useRef(false);
   const addressCacheRef = useRef<Map<string, string>>(new Map());
+  const shakeDetectionRef = useRef<{ lastX: number; lastY: number; lastZ: number; lastTime: number; shakeCount: number } | null>(null);
+  const nearbyFriendsRef = useRef<Set<number>>(new Set());
+  const celebrationActiveRef = useRef(false);
+  const [showCelebration, setShowCelebration] = useState(false);
 
   // Защита от зависания: таймаут на 10 секунд
   useEffect(() => {
@@ -370,7 +386,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     setImpulses(prev => prev.map(i => 
                       i.id === impulse.id ? impulseWithAddress : i
                     ));
-                  } else {
+          } else {
                     impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
                   }
                 }
@@ -388,7 +404,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                       console.warn('[MapScreen] Haptic error:', e);
                     }
                   }
-                } else {
+          } else {
                   // Первый клик - фокус на событии
                   setSelectedImpulse(impulseWithAddress);
                   setLastClickedImpulseId(impulse.id);
@@ -630,7 +646,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 if (userLocation) {
                   const eventsWithDistance = loadedImpulses
                     .map(impulse => ({
-                      ...impulse,
+            ...impulse,
                       distance: calculateDistance(
                         userLocation.lat,
                         userLocation.lng,
@@ -656,7 +672,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                         setImpulses(prev => prev.map(i => 
                           i.id === impulse.id ? impulseWithAddress : i
                         ));
-          } else {
+        } else {
                         impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
         }
       }
@@ -701,6 +717,174 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
       onEventSelected(selectedImpulse);
     }
   }, [selectedImpulse, onEventSelected]);
+
+  // Функция расчета расстояния между двумя точками (Haversine formula) - для друзей
+  const calculateDistanceBetweenFriends = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371; // Радиус Земли в километрах
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c * 1000; // Возвращаем в метрах
+  };
+
+  // Определение близости друзей (30 метров)
+  useEffect(() => {
+    if (!showFriends || !userLocation || friends.length === 0) {
+      nearbyFriendsRef.current.clear();
+            return;
+          }
+
+    const checkNearbyFriends = () => {
+      const nearby: Set<number> = new Set();
+      
+      friends.forEach(friend => {
+        if (friend.location_lat && friend.location_lng) {
+          const distance = calculateDistanceBetweenFriends(
+            userLocation.lat,
+            userLocation.lng,
+            friend.location_lat,
+            friend.location_lng
+          );
+          
+          if (distance <= 30) { // 30 метров
+            nearby.add(friend.id);
+          }
+        }
+      });
+
+      // Если есть изменения в близких друзьях
+      const hasChanges = nearby.size !== nearbyFriendsRef.current.size || 
+        Array.from(nearby).some(id => !nearbyFriendsRef.current.has(id));
+      
+      if (hasChanges) {
+        nearbyFriendsRef.current = nearby;
+        if (onFriendsNearby && nearby.size > 0) {
+          onFriendsNearby(Array.from(nearby));
+        }
+      }
+    };
+
+    checkNearbyFriends();
+    const interval = setInterval(checkNearbyFriends, 2000); // Проверяем каждые 2 секунды
+    return () => clearInterval(interval);
+  }, [showFriends, userLocation, friends, onFriendsNearby]);
+
+  // Определение тряски телефона через акселерометр
+  useEffect(() => {
+    if (!showFriends || nearbyFriendsRef.current.size === 0 || celebrationActiveRef.current) {
+          return;
+        }
+
+    // Пытаемся использовать DeviceMotionEvent
+    const DeviceMotionEventWithPermission = DeviceMotionEvent as any;
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEventWithPermission.requestPermission === 'function') {
+      DeviceMotionEventWithPermission.requestPermission()
+        .then((permission: string) => {
+          if (permission === 'granted') {
+            startShakeDetection();
+          }
+        })
+        .catch(() => {
+          // Fallback для браузеров без requestPermission
+          startShakeDetection();
+        });
+    } else {
+      startShakeDetection();
+    }
+
+    function startShakeDetection() {
+      if (!shakeDetectionRef.current) {
+        shakeDetectionRef.current = {
+          lastX: 0,
+          lastY: 0,
+          lastZ: 0,
+          lastTime: Date.now(),
+          shakeCount: 0,
+        };
+      }
+
+      const handleMotion = (e: DeviceMotionEvent) => {
+        if (!e.accelerationIncludingGravity) return;
+
+        const { x, y, z } = e.accelerationIncludingGravity;
+        const now = Date.now();
+        const timeDiff = now - shakeDetectionRef.current!.lastTime;
+
+        if (timeDiff > 100) { // Проверяем каждые 100ms
+          const deltaX = Math.abs(x! - shakeDetectionRef.current!.lastX);
+          const deltaY = Math.abs(y! - shakeDetectionRef.current!.lastY);
+          const deltaZ = Math.abs(z! - shakeDetectionRef.current!.lastZ);
+
+          const totalDelta = deltaX + deltaY + deltaZ;
+
+          // Порог для определения тряски (можно настроить)
+          if (totalDelta > 15) {
+            shakeDetectionRef.current!.shakeCount++;
+            
+            // Если тряска продолжается (3+ раза подряд)
+            if (shakeDetectionRef.current!.shakeCount >= 3 && nearbyFriendsRef.current.size > 0) {
+              triggerCelebration();
+              shakeDetectionRef.current!.shakeCount = 0;
+            }
+          } else {
+            shakeDetectionRef.current!.shakeCount = 0;
+          }
+
+          shakeDetectionRef.current!.lastX = x!;
+          shakeDetectionRef.current!.lastY = y!;
+          shakeDetectionRef.current!.lastZ = z!;
+          shakeDetectionRef.current!.lastTime = now;
+        }
+      };
+
+      window.addEventListener('devicemotion', handleMotion);
+
+      return () => {
+        window.removeEventListener('devicemotion', handleMotion);
+      };
+    }
+
+    return startShakeDetection();
+  }, [showFriends, nearbyFriendsRef.current.size]);
+
+  // Функция запуска празднования (салют + вибрация)
+  const triggerCelebration = () => {
+    if (celebrationActiveRef.current) return;
+    
+    celebrationActiveRef.current = true;
+    setShowCelebration(true);
+
+    // Интенсивная вибрация (паттерн: длинная, пауза, короткая, пауза, длинная)
+    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+      try {
+        // Интенсивная вибрация
+        const vibratePattern = [0, 200, 100, 200, 100, 300];
+        let delay = 0;
+        vibratePattern.forEach((duration, index) => {
+          if (index % 2 === 1) { // Только для длительностей вибрации
+            setTimeout(() => {
+              if (window.Telegram?.WebApp?.HapticFeedback) {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('heavy');
+              }
+            }, delay);
+          }
+          delay += duration;
+        });
+      } catch (e) {
+        console.warn('[MapScreen] Haptic error:', e);
+      }
+    }
+
+    // Скрываем анимацию через 3 секунды
+    setTimeout(() => {
+      setShowCelebration(false);
+      celebrationActiveRef.current = false;
+    }, 3000);
+  };
 
 
   // КОНТЕЙНЕР КАРТЫ ВСЕГДА В DOM (просто скрыт во время загрузки)
@@ -958,8 +1142,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               {/* Описание события */}
               <div className="mb-4">
                 <p className="text-sm text-white/90 leading-relaxed">
-                  {selectedImpulse.content}
-                </p>
+                {selectedImpulse.content}
+              </p>
               </div>
 
               {/* Адрес */}
@@ -1034,6 +1218,67 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               </button>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Анимация салюта при встрече друзей */}
+      <AnimatePresence>
+        {showCelebration && (
+          <div className="celebration-overlay">
+            {[...Array(50)].map((_, i) => {
+              const angle = (i / 50) * Math.PI * 2;
+              const distance = 150 + Math.random() * 100;
+              const x = Math.cos(angle) * distance;
+              const y = Math.sin(angle) * distance;
+              const delay = Math.random() * 0.5;
+              const color = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#ff6b9d', '#c44569', '#f8b500'][Math.floor(Math.random() * 6)];
+              
+              return (
+                <div
+                  key={i}
+                  className="firework"
+                  style={{
+                    left: `calc(50% + ${x}px)`,
+                    top: `calc(50% + ${y}px)`,
+                    backgroundColor: color,
+                    boxShadow: `0 0 20px ${color}, 0 0 40px ${color}`,
+                    animationDelay: `${delay}s`,
+                  }}
+                />
+              );
+            })}
+            {[...Array(30)].map((_, i) => {
+              const angle = (i / 30) * Math.PI * 2;
+              const distance = 80 + Math.random() * 50;
+              const x = Math.cos(angle) * distance;
+              const y = Math.sin(angle) * distance;
+              const delay = Math.random() * 0.3;
+              const color = ['#ffd700', '#ff6b6b', '#4ecdc4'][Math.floor(Math.random() * 3)];
+              
+              return (
+                <div
+                  key={`sparkle-${i}`}
+                  className="sparkle"
+                  style={{
+                    left: `calc(50% + ${x}px)`,
+                    top: `calc(50% + ${y}px)`,
+                    backgroundColor: color,
+                    boxShadow: `0 0 10px ${color}`,
+                    animationDelay: `${delay}s`,
+                  }}
+                />
+              );
+            })}
+            <motion.div
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              className="text-6xl"
+              style={{ filter: 'drop-shadow(0 0 20px rgba(255, 215, 0, 0.8))' }}
+            >
+              🎉
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

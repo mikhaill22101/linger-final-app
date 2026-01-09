@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -703,24 +703,48 @@ function App() {
                 LINGER
               </h1>
 
-              {/* Кнопка создания события справа */}
-              <button
-                onClick={() => {
-                  setModalOpen(true);
-                  setStep('category');
-                  setSelectedCategory(null);
-                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                    try {
-                      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                    } catch (e) {
-                      console.warn('Haptic error:', e);
+              {/* Кнопки справа */}
+              <div className="flex items-center gap-2">
+                {/* Кнопка просмотра друзей */}
+                <button
+                  onClick={() => {
+                    setShowFriendsMap(!showFriendsMap);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                      } catch (e) {
+                        console.warn('Haptic error:', e);
+                      }
                     }
-                  }
-                }}
-                className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg shadow-purple-500/30"
-              >
-                <PlusCircle size={22} className="text-white" />
-              </button>
+                  }}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg ${
+                    showFriendsMap 
+                      ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' 
+                      : 'bg-white/10 border border-white/20'
+                  }`}
+                >
+                  <UsersRound size={20} className="text-white" />
+                </button>
+
+                {/* Кнопка создания события */}
+                <button
+                  onClick={() => {
+                    setModalOpen(true);
+                    setStep('category');
+                    setSelectedCategory(null);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                      } catch (e) {
+                        console.warn('Haptic error:', e);
+                      }
+                    }
+                  }}
+                  className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg shadow-purple-500/30"
+                >
+                  <PlusCircle size={22} className="text-white" />
+                </button>
+              </div>
             </header>
 
             {/* Лента активности */}
