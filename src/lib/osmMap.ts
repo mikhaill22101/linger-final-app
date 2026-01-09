@@ -142,7 +142,7 @@ export const osmMapAdapter: MapAdapter = {
         markers = [];
         map.remove();
       },
-      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number) {
+      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) {
         // Сохраняем данные
         currentImpulses = impulses;
         currentOnClick = onClick;
@@ -170,19 +170,62 @@ export const osmMapAdapter: MapAdapter = {
           const icon = createMarkerIcon(color, isActive, isNearest, smartIconData.emoji, 20, smartIconData.animationType);
           const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);
           
+          // Обработка длительного нажатия (force touch / long press)
+          let longPressTimer: NodeJS.Timeout | null = null;
+          let isLongPress = false;
+          
+          const handleStart = (e: L.LeafletMouseEvent | L.LeafletEvent) => {
+            isLongPress = false;
+            longPressTimer = setTimeout(() => {
+              isLongPress = true;
+              if (onLongPress) {
+                onLongPress(impulse);
+                // Haptic feedback при длительном нажатии
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                  try {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                  } catch (e) {
+                    // Игнорируем ошибки haptic feedback
+                  }
+                }
+              }
+            }, 600); // 600ms для определения длительного нажатия
+          };
+          
+          const handleEnd = () => {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+          };
+          
+          // Обработка обычного клика (только если не было длительного нажатия)
           marker.on('click', () => {
-            if (currentOnClick) {
+            if (!isLongPress && currentOnClick) {
               currentOnClick(impulse);
             }
-            // Тактильная отдача при клике на анимированный маркер
-            if (window.Telegram?.WebApp?.HapticFeedback) {
-              try {
-                window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-              } catch (e) {
-                // Игнорируем ошибки haptic feedback
-              }
-            }
+            isLongPress = false;
           });
+          
+          // Обработка touch событий для длительного нажатия
+          marker.on('mousedown', handleStart);
+          marker.on('mouseup', handleEnd);
+          marker.on('mouseleave', handleEnd);
+          
+          // Для touch устройств
+          const markerElement = marker.getElement();
+          if (markerElement) {
+            markerElement.addEventListener('touchstart', (e) => {
+              handleStart(e as any);
+            });
+            markerElement.addEventListener('touchend', () => {
+              handleEnd();
+            });
+            markerElement.addEventListener('touchcancel', () => {
+              handleEnd();
+            });
+          }
+          
           markers.push(marker);
         });
       },

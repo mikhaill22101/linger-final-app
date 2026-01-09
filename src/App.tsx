@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -134,6 +134,15 @@ function App() {
   const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы с выбранным пользователем
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+  // Загрузка данных пользователя для header
+  useEffect(() => {
+    const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+    if (tgUser) {
+      setUserAvatar(tgUser.photo_url);
+      setUserName(tgUser.first_name || tgUser.username || '');
+    }
+  }, []);
 
   // Функция расчета расстояния между двумя точками (Haversine formula)
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -328,8 +337,7 @@ function App() {
 
   const handleCategoryClick = (id: string) => {
     setSelectedCategory(id);
-    setStep('description'); // Начинаем с шага описания
-    setModalOpen(true);
+    setStep('description'); // Переходим к шагу описания
     setMessageContent('');
     setEventAddress('');
     setEventCoords(null);
@@ -625,75 +633,98 @@ function App() {
     }
   };
 
+  // Состояние для детального окна события на главной странице
+  const [selectedEventDetail, setSelectedEventDetail] = useState<Impulse | null>(null);
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
-      <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'}`}>
+      <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'} relative`}>
         {activeTab === 'home' ? (
           <>
-            <header className="pt-16 pb-8 px-6 text-center">
-              <motion.h1 
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-5xl font-light tracking-[0.2em] mb-2"
+            {/* Карта на фоне */}
+            <div className="fixed inset-0 z-0">
+              <MapScreen 
+                key="background-map"
+                activeCategory={null}
+                refreshTrigger={mapRefreshTrigger}
+                isBackground={true}
+                onEventLongPress={async (impulse) => {
+                  // При длительном нажатии открываем детальное окно
+                  setSelectedEventDetail(impulse as Impulse);
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    } catch (e) {
+                      console.warn('Haptic error:', e);
+                    }
+                  }
+                }}
+              />
+            </div>
+
+            {/* Контент поверх карты */}
+            <div className="relative z-10 bg-black/40 backdrop-blur-sm min-h-screen">
+            {/* Новый Header с аватаркой и кнопкой создания */}
+            <header className="sticky top-0 z-50 px-4 py-3 flex items-center justify-between backdrop-blur-xl border-b border-white/10"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              {/* Аватарка пользователя слева */}
+              <button
+                onClick={() => {
+                  setActiveTab('profile');
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    } catch (e) {
+                      console.warn('Haptic error:', e);
+                    }
+                  }
+                }}
+                className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/20 hover:border-white/40 transition-colors flex-shrink-0"
               >
+                {userAvatar ? (
+                  <img 
+                    src={userAvatar} 
+                    alt={userName || 'User'} 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                    {(userName || 'U')[0].toUpperCase()}
+                  </div>
+                )}
+              </button>
+
+              {/* Логотип по центру */}
+              <h1 className="text-xl font-light tracking-[0.2em] text-white">
                 LINGER
-              </motion.h1>
-              <motion.p 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="text-gray-500 uppercase tracking-widest text-[10px]"
+              </h1>
+
+              {/* Кнопка создания события справа */}
+              <button
+                onClick={() => {
+                  setModalOpen(true);
+                  setStep('category');
+                  setSelectedCategory(null);
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                    } catch (e) {
+                      console.warn('Haptic error:', e);
+                    }
+                  }
+                }}
+                className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg shadow-purple-500/30"
               >
-                Meet the Moment
-              </motion.p>
+                <PlusCircle size={22} className="text-white" />
+              </button>
             </header>
 
-            <main className="px-4 pb-6 space-y-4">
-              {categories.map((cat) => {
-                const categoryClass = `category-${cat.id}`;
-                const isActive = activeCategory === cat.id;
-                
-                return (
-                <div key={cat.id} className="relative overflow-visible">
-                  <motion.button
-                    onClick={() => {
-                      handleCategoryClick(cat.id);
-                      // Тактильная отдача при клике на категорию
-                      if (window.Telegram?.WebApp?.HapticFeedback) {
-                        try {
-                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                        } catch (e) {
-                          console.warn('Haptic error:', e);
-                        }
-                      }
-                    }}
-                      className={`relative w-full p-5 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 z-10 ${
-                        isActive ? 'border-white/30' : ''
-                      }`}
-                  >
-                    <div className="flex items-center gap-4">
-                        <div className={`category-ring ${categoryClass} ${isActive ? 'active' : ''}`}>
-                          <div className="category-icon-wrapper">
-                            <cat.icon size={22} className="text-white/80" />
-                          </div>
-                        </div>
-                        <span className="text-lg font-light tracking-wide text-white">
-                        {isRussian ? cat.label.ru : cat.label.en}
-                      </span>
-                    </div>
-                    <span className="text-xs text-white/40">
-                      {isRussian ? 'Нажмите' : 'Tap'}
-                    </span>
-                  </motion.button>
-                </div>
-                );
-              })}
-            </main>
-
-            <section className="px-4 pb-12">
-              <h2 className="text-xl font-light mb-4 text-white/80">
-                {isRussian ? 'Лента активности' : 'Activity Feed'}
-              </h2>
+            {/* Лента активности */}
+            <section className="px-4 py-6">
               {isLoadingFeed ? (
                 <div className="text-center py-8 text-white/40">
                   {isRussian ? 'Загрузка...' : 'Loading...'}
@@ -891,6 +922,60 @@ function App() {
                 );
               })()}
             </section>
+            </div>
+
+            {/* Детальное окно события при длительном нажатии */}
+            <AnimatePresence>
+              {selectedEventDetail && (
+                <>
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setSelectedEventDetail(null)}
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xl font-light text-white">
+                        {selectedEventDetail.category}
+                      </h3>
+                      <button
+                        onClick={() => setSelectedEventDetail(null)}
+                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                      >
+                        <X size={20} className="text-white/60" />
+                      </button>
+                    </div>
+                    <div className="space-y-4">
+                      <p className="text-white/90 leading-relaxed">
+                        {selectedEventDetail.content}
+                      </p>
+                      {selectedEventDetail.address && (
+                        <div className="flex items-start gap-2 text-white/70 text-sm">
+                          <MapPin size={16} className="mt-0.5 flex-shrink-0" />
+                          <span>{selectedEventDetail.address}</span>
+                        </div>
+                      )}
+                      {selectedEventDetail.event_date && selectedEventDetail.event_time && (
+                        <div className="flex items-center gap-2 text-white/70 text-sm">
+                          <Clock size={16} />
+                          <span>
+                            {selectedEventDetail.event_date} в {selectedEventDetail.event_time}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </>
         ) : activeTab === 'profile' ? (
           <Profile />
@@ -908,7 +993,7 @@ function App() {
       </div>
 
       <AnimatePresence>
-        {modalOpen && selectedCategory && (
+        {modalOpen && (
           <>
             <motion.div
               initial={{ opacity: 0 }}
@@ -926,10 +1011,12 @@ function App() {
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-light text-white">
-                  {(() => {
-                    const category = categories.find(cat => cat.id === selectedCategory);
-                    return category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
-                  })()}
+                  {step === 'category' 
+                    ? (isRussian ? 'Выберите категорию' : 'Choose Category')
+                    : step === 'description'
+                    ? (isRussian ? 'Опишите событие' : 'Describe Event')
+                    : (isRussian ? 'Выберите место и время' : 'Select Location & Time')
+                  }
                 </h3>
                 <button
                   onClick={handleCloseModal}
@@ -939,11 +1026,46 @@ function App() {
                 </button>
               </div>
 
-              {/* Индикатор шагов */}
-              <div className="flex items-center gap-2 mb-4">
+              {/* Индикатор шагов (3 шага: category, description, location) */}
+              <div className="flex items-center gap-2 mb-6">
                 <div className={`flex-1 h-1 rounded-full ${step === 'description' || step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
                 <div className={`flex-1 h-1 rounded-full ${step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
               </div>
+
+              {/* Шаг 0: Выбор категории */}
+              {step === 'category' && (
+                <div className="space-y-3">
+                  {categories.map((cat) => {
+                    const categoryClass = `category-${cat.id}`;
+                    
+                    return (
+                      <motion.button
+                        key={cat.id}
+                        onClick={() => {
+                          handleCategoryClick(cat.id);
+                        }}
+                        className={`relative w-full p-4 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 ${
+                          selectedCategory === cat.id ? 'border-white/30' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className={`category-ring ${categoryClass} ${selectedCategory === cat.id ? 'active' : ''}`}>
+                            <div className="category-icon-wrapper">
+                              <cat.icon size={22} className="text-white/80" />
+                            </div>
+                          </div>
+                          <span className="text-lg font-light tracking-wide text-white">
+                            {isRussian ? cat.label.ru : cat.label.en}
+                          </span>
+                        </div>
+                        <span className="text-xs text-white/40">
+                          {selectedCategory === cat.id ? (isRussian ? 'Выбрано' : 'Selected') : (isRussian ? 'Выбрать' : 'Select')}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Шаг 1: Описание */}
               {step === 'description' && (

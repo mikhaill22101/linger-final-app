@@ -19,7 +19,7 @@ export interface ImpulseLocation {
 
 export interface MapInstance {
   destroy: () => void;
-  setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void, activeCategory?: string | null, nearestEventId?: number) => void;
+  setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) => void;
   setActiveCategory?: (category: string | null) => void;
   flyTo: (location: GeoLocation, zoom?: number, duration?: number) => void;
   getBounds: () => { north: number; south: number; east: number; west: number } | null;

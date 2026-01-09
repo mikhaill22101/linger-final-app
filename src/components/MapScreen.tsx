@@ -224,9 +224,11 @@ interface MapScreenProps {
   onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
   onEventSelected?: (impulse: ImpulseLocation | null) => void; // Коллбэк при выборе события (для скрытия таб-бара)
   onBack?: () => void; // Коллбэк для возврата на главную
+  isBackground?: boolean; // Режим фона (для главной страницы)
+  onEventLongPress?: (impulse: ImpulseLocation) => void; // Коллбэк при длительном нажатии на событие
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -413,7 +415,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     }
                   }
                 }
-              }, activeCategory || null, nearestEventId);
+              }, activeCategory || null, nearestEventId, isBackground ? onEventLongPress : undefined);
             }
 
             // Очищаем таймаут и устанавливаем статус ready
@@ -703,7 +705,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
   // КОНТЕЙНЕР КАРТЫ ВСЕГДА В DOM (просто скрыт во время загрузки)
     return (
-    <div className="relative w-full h-screen bg-black">
+    <div className={`relative w-full h-screen bg-black ${isBackground ? 'pointer-events-none' : ''}`} style={isBackground ? { opacity: 0.3 } : {}}>
       {/* Контейнер карты ВСЕГДА в DOM, скрыт во время загрузки */}
       <div 
         id="map" 
@@ -755,8 +757,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
       {/* Виджет близлежащих событий */}
       {!isSelectionMode && !selectedImpulse && status === 'ready' && nearbyEvents.length > 0 && (
         <div className="absolute bottom-4 left-0 right-0 z-[900] px-4">
+          <h3 className="text-xs text-white/70 mb-2 px-2">Ближайшие события</h3>
           <div className="bg-black/90 backdrop-blur-xl border border-white/20 rounded-2xl p-3">
-            <h3 className="text-xs text-white/70 mb-2 px-2">Ближайшие события</h3>
             <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {nearbyEvents.map((event) => (
                 <motion.div
@@ -840,7 +842,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
       {/* Умное окно событий в стиле Zenly - Compact Glass, высота 60-70px */}
       <AnimatePresence>
-        {selectedImpulse && status === 'ready' && !isSelectionMode && (
+        {selectedImpulse && status === 'ready' && !isSelectionMode && !isBackground && (
           <div className="absolute bottom-0 left-0 right-0 p-2 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
@@ -873,7 +875,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               className="rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-white/10 transition-all active:scale-95"
               style={{
                 height: '65px',
-                backgroundColor: 'rgba(255, 255, 255, 0.4)',
+                backgroundColor: 'rgba(255, 255, 255, 0.6)',
                 backdropFilter: 'blur(20px)',
                 WebkitBackdropFilter: 'blur(20px)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
