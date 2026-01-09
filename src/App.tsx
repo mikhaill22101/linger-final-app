@@ -17,6 +17,7 @@ interface Impulse {
   author_name?: string;
   location_lat?: number;
   location_lng?: number;
+  distance?: number;
 }
 
 const categories = [
@@ -122,13 +123,35 @@ function App() {
   const [isMapSelectionMode, setIsMapSelectionMode] = useState(false); // Режим выбора точки на карте
   const [eventDate, setEventDate] = useState<string>('');
   const [eventTime, setEventTime] = useState<string>('');
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+  // Функция расчета расстояния между двумя точками (Haversine formula)
+  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371; // Радиус Земли в километрах
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
 
   useEffect(() => {
     try {
       WebApp.ready();
       WebApp.expand();
+      
+      // Получаем геопозицию пользователя
+      (async () => {
+        const location = await getCurrentLocation();
+        if (location) {
+          setUserLocation(location);
+        }
+      })();
       
       // Проверяем подключение к Supabase перед загрузкой данных
       (async () => {
@@ -204,17 +227,37 @@ function App() {
         }
       }
 
-      // Обрабатываем данные с именами авторов
-      const processedFeed = data.map((item: any) => ({
-        id: item.id,
-        content: item.content,
-        category: item.category,
-        creator_id: item.creator_id,
-        created_at: item.created_at,
-        location_lat: item.location_lat,
-        location_lng: item.location_lng,
-        author_name: profilesMap.get(item.creator_id) || undefined,
-      }));
+      // Обрабатываем данные с именами авторов и расстоянием
+      let processedFeed = data.map((item: any) => {
+        let distance = Infinity;
+        if (userLocation && item.location_lat && item.location_lng) {
+          distance = calculateDistance(
+            userLocation.lat,
+            userLocation.lng,
+            item.location_lat,
+            item.location_lng
+          );
+        }
+        return {
+          id: item.id,
+          content: item.content,
+          category: item.category,
+          creator_id: item.creator_id,
+          created_at: item.created_at,
+          location_lat: item.location_lat,
+          location_lng: item.location_lng,
+          author_name: profilesMap.get(item.creator_id) || undefined,
+          distance,
+        };
+      });
+
+      // Сортируем по расстоянию (ближайшие первыми)
+      processedFeed = processedFeed.sort((a, b) => {
+        if (a.distance === Infinity && b.distance === Infinity) return 0;
+        if (a.distance === Infinity) return 1;
+        if (b.distance === Infinity) return -1;
+        return a.distance - b.distance;
+      });
 
       setFeed(processedFeed);
     } catch (err) {
@@ -586,11 +629,20 @@ function App() {
                     </motion.div>
                   ))}
                 </div>
-              ) : feed.length < 5 ? (
-                <>
+              ) : (() => {
+                // Логика количества ячеек:
+                // 1 событие → 1 событие + 1 ячейка = 2
+                // 2 события → 2 события + 1 ячейка = 3
+                // 3+ событий → 3 события + 1 ячейка = 4
+                const maxRealEvents = feed.length >= 3 ? 3 : feed.length;
+                const eventsToShow = feed.slice(0, maxRealEvents);
+                const shouldShowCallToAction = true; // Всегда показываем последнюю ячейку
+
+                return (
                   <div className="space-y-3">
                     <AnimatePresence>
-                      {feed.map((impulse, index) => (
+                      {/* Реальные события */}
+                      {eventsToShow.map((impulse, index) => (
                         <motion.div
                           key={impulse.id}
                           initial={{ opacity: 0, y: 20 }}
@@ -640,92 +692,38 @@ function App() {
                         </motion.div>
                       ))}
                     </AnimatePresence>
-                  </div>
-                  {/* Заглушки для призыва к действию */}
-                  {Array.from({ length: 5 - feed.length }).map((_, index) => (
-                    <motion.div
-                      key={`call-to-action-${index}`}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: (feed.length + index) * 0.1 }}
-                      className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-6 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
-                      onClick={() => {
-                        const category = categories[Math.floor(Math.random() * categories.length)];
-                        handleCategoryClick(category.id);
-                        if (window.Telegram?.WebApp?.HapticFeedback) {
-                          try {
-                            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                          } catch (e) {
-                            console.warn('Haptic error:', e);
-                          }
-                        }
-                      }}
-                    >
-                      <div className="text-2xl mb-2">✨</div>
-                      <p className="text-sm font-medium text-white/90 mb-1">
-                        {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
-                      </p>
-                      <p className="text-xs text-white/60">
-                        {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
-                      </p>
-                    </motion.div>
-                  ))}
-                </>
-              ) : (
-                <div className="space-y-3">
-                  <AnimatePresence>
-                    {feed.map((impulse, index) => (
+                    
+                    {/* Ячейка призыва к действию - всегда последняя, компактная */}
+                    {shouldShowCallToAction && (
                       <motion.div
-                        key={impulse.id}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -20 }}
-                        transition={{ delay: index * 0.05 }}
-                        className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md relative"
+                        transition={{ delay: (eventsToShow.length) * 0.05 }}
+                        className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-3 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
+                        onClick={() => {
+                          const category = categories[Math.floor(Math.random() * categories.length)];
+                          handleCategoryClick(category.id);
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }}
                       >
-                        {/* Индикатор новизны для событий < 2 часов */}
-                        {isNewEvent(impulse.created_at) && (
-                          <motion.div
-                            initial={{ opacity: 0, scale: 0.8 }}
-                            animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
-                            transition={{ duration: 2, repeat: Infinity }}
-                            className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg"
-                          >
-                            <span className="text-xs">🔥</span>
-                          </motion.div>
-                        )}
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-white">
-                              {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
-                            </span>
-                            <span className="text-xs text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
-                              {impulse.category}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-white/40">
-                            <Clock size={12} />
-                            <span>{formatTime(impulse.created_at)}</span>
-                          </div>
-                        </div>
-                        <p className="text-sm text-white/80 leading-relaxed mb-2">
-                          {impulse.content}
+                        <div className="text-xl mb-1">✨</div>
+                        <p className="text-xs font-medium text-white/90 mb-0.5">
+                          {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
                         </p>
-                        <div className="flex items-center gap-1 text-xs text-purple-400 mt-2">
-                          <Clock size={12} />
-                          <span>{formatDateTime(impulse.created_at)}</span>
-                        </div>
-                        {impulse.location_lat && impulse.location_lng && (
-                          <div className="mt-2 flex items-center gap-1 text-xs text-white/40">
-                            <MapPin size={12} />
-                            <span>{isRussian ? 'С геолокацией' : 'With location'}</span>
-                          </div>
-                        )}
+                        <p className="text-[10px] text-white/60">
+                          {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
+                        </p>
                       </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
             </section>
           </>
         ) : activeTab === 'profile' ? (
