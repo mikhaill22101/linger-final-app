@@ -148,7 +148,7 @@ export const osmMapAdapter: MapAdapter = {
             });
 
             selectionMarker = L.marker([lat, lng], { icon: selectionIcon }).addTo(map);
-            map.flyTo([lat, lng], map.getZoom() > 15 ? map.getZoom() : 15);
+            map.flyTo([lat, lng], map.getZoom() > 15 ? map.getZoom() : 16);
 
             // Вызываем коллбэк
             if (locationSelectCallback) {

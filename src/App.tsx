@@ -4,7 +4,8 @@ import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clo
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
 import MapScreen from './components/MapScreen';
-import { supabase } from './lib/supabase';
+import MapPicker from './components/MapPicker';
+import { supabase, isSupabaseConfigured, checkSupabaseConnection } from './lib/supabase';
 
 interface Impulse {
   id: number;
@@ -118,6 +119,8 @@ function App() {
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const [mapRefreshTrigger, setMapRefreshTrigger] = useState(0);
   const [isMapSelectionMode, setIsMapSelectionMode] = useState(false); // Режим выбора точки на карте
+  const [eventDate, setEventDate] = useState<string>('');
+  const [eventTime, setEventTime] = useState<string>('');
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -125,7 +128,24 @@ function App() {
     try {
       WebApp.ready();
       WebApp.expand();
-      loadFeed();
+      
+      // Проверяем подключение к Supabase перед загрузкой данных
+      (async () => {
+        if (!isSupabaseConfigured) {
+          console.error('❌ Supabase не настроен. Проверьте переменные окружения.');
+          if (window.Telegram?.WebApp?.showAlert) {
+            window.Telegram.WebApp.showAlert('Ошибка: Supabase не настроен. Проверьте конфигурацию.');
+          }
+          return;
+        }
+        
+        const isConnected = await checkSupabaseConnection();
+        if (!isConnected) {
+          console.warn('⚠️ Не удалось подключиться к Supabase');
+        }
+        
+        loadFeed();
+      })();
     } catch (e) {
       console.error('Error in App useEffect:', e);
     }
@@ -134,58 +154,68 @@ function App() {
   const loadFeed = async () => {
     try {
       setIsLoadingFeed(true);
-      // Исправленный запрос: используем impulses напрямую, а не представление
+      
+      // Проверка подключения к Supabase
+      if (!isSupabaseConfigured) {
+        console.error('❌ Supabase не настроен, пропускаем загрузку ленты');
+        setFeed([]);
+        setIsLoadingFeed(false);
+        return;
+      }
+
+      // Исправленный запрос: показываем все активные impulses, отсортированные по created_at DESC
       const { data, error } = await supabase
         .from('impulses')
-        .select(`
-          id,
-          content,
-          category,
-          creator_id,
-          created_at,
-          location_lat,
-          location_lng,
-          profiles:creator_id (
-            full_name
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(20);
+        .select('*')
+        .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error loading feed:', error);
-        // Пробуем альтернативный запрос
-        const { data: altData, error: altError } = await supabase
-          .from('impulses')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(20);
-        
-        if (altError) {
-          console.error('Error loading feed (alt):', altError);
-          setFeed([]);
-        } else {
-          // Обрабатываем данные без join
-          const processedFeed = (altData || []).map((item: any) => ({
-            ...item,
-            author_name: undefined, // Загрузим отдельно если нужно
-          }));
-          setFeed(processedFeed);
-        }
-      } else {
-        // Обрабатываем данные с join
-        const processedFeed = (data || []).map((item: any) => ({
-          id: item.id,
-          content: item.content,
-          category: item.category,
-          creator_id: item.creator_id,
-          created_at: item.created_at,
-          location_lat: item.location_lat,
-          location_lng: item.location_lng,
-          author_name: item.profiles?.full_name || undefined,
-        }));
-        setFeed(processedFeed);
+        console.error('❌ Error loading feed from Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
+        setFeed([]);
+        return;
       }
+
+      if (!data || data.length === 0) {
+        setFeed([]);
+        return;
+      }
+
+      // Загружаем имена авторов отдельно
+      const creatorIds = [...new Set(data.map((item: any) => item.creator_id))];
+      let profilesMap = new Map<number, string>();
+
+      if (creatorIds.length > 0) {
+        try {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', creatorIds);
+
+          if (profiles) {
+            profilesMap = new Map(
+              profiles.map((p: { id: number; full_name: string | null }) => [p.id, p.full_name ?? ''])
+            );
+          }
+        } catch (profileError) {
+          console.warn('Error loading profiles:', profileError);
+        }
+      }
+
+      // Обрабатываем данные с именами авторов
+      const processedFeed = data.map((item: any) => ({
+        id: item.id,
+        content: item.content,
+        category: item.category,
+        creator_id: item.creator_id,
+        created_at: item.created_at,
+        location_lat: item.location_lat,
+        location_lng: item.location_lng,
+        author_name: profilesMap.get(item.creator_id) || undefined,
+      }));
+
+      setFeed(processedFeed);
     } catch (err) {
       console.error('Failed to load feed:', err);
       setFeed([]);
@@ -371,6 +401,13 @@ function App() {
         }
       }
 
+      // Проверка подключения к Supabase перед отправкой
+      if (!isSupabaseConfigured) {
+        WebApp.showAlert(isRussian ? 'Ошибка: База данных не настроена' : 'Error: Database not configured');
+        setIsSubmitting(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('impulses')
         .insert({
@@ -383,8 +420,19 @@ function App() {
         .single();
 
       if (error) {
-        console.error('Error sending message:', error);
-        WebApp.showAlert(isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message');
+        console.error('❌ Error sending message to Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
+        console.error('  Details:', error.details);
+        
+        let errorMessage = isRussian ? 'Ошибка при отправке сообщения' : 'Error sending message';
+        if (error.code === '23503') {
+          errorMessage = isRussian ? 'Ошибка: Пользователь не найден в базе данных' : 'Error: User not found in database';
+        } else if (error.code === '42501') {
+          errorMessage = isRussian ? 'Ошибка: Нет доступа к базе данных' : 'Error: Database access denied';
+        }
+        
+        WebApp.showAlert(errorMessage);
       } else {
         console.log('Message sent successfully:', data);
         WebApp.showAlert(isRussian ? 'Событие успешно создано!' : 'Event created successfully!');
@@ -409,6 +457,15 @@ function App() {
     }
   };
 
+  // Проверка, создано ли событие менее 2 часов назад
+  const isNewEvent = (dateString: string): boolean => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const hours = diff / 3600000;
+    return hours < 2;
+  };
+
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -422,6 +479,26 @@ function App() {
     if (hours < 24) return isRussian ? `${hours} ч назад` : `${hours}h ago`;
     if (days < 7) return isRussian ? `${days} дн назад` : `${days}d ago`;
     return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
+  };
+
+  // Форматирование даты и времени для карточек
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    if (eventDate.getTime() === today.getTime()) {
+      // Сегодня
+      return isRussian 
+        ? `Сегодня в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+        : `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      // Другая дата
+      return isRussian
+        ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
+        : date.toLocaleDateString('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
   };
 
   return (
@@ -477,9 +554,122 @@ function App() {
                   {isRussian ? 'Загрузка...' : 'Loading...'}
                 </div>
               ) : feed.length === 0 ? (
-                <div className="text-center py-8 text-white/40">
-                  {isRussian ? 'Пока нет сообщений' : 'No messages yet'}
+                <div className="space-y-3">
+                  {/* Заглушки для пустого состояния */}
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <motion.div
+                      key={`placeholder-${index}`}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-6 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
+                      onClick={() => {
+                        const category = categories[Math.floor(Math.random() * categories.length)];
+                        handleCategoryClick(category.id);
+                        if (window.Telegram?.WebApp?.HapticFeedback) {
+                          try {
+                            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                          } catch (e) {
+                            console.warn('Haptic error:', e);
+                          }
+                        }
+                      }}
+                    >
+                      <div className="text-2xl mb-2">✨</div>
+                      <p className="text-sm font-medium text-white/90 mb-1">
+                        {isRussian ? 'Создайте первое событие!' : 'Create your first event!'}
+                      </p>
+                      <p className="text-xs text-white/60">
+                        {isRussian ? 'Нажмите на категорию выше, чтобы начать' : 'Tap a category above to get started'}
+                      </p>
+                    </motion.div>
+                  ))}
                 </div>
+              ) : feed.length < 5 ? (
+                <>
+                  <div className="space-y-3">
+                    <AnimatePresence>
+                      {feed.map((impulse, index) => (
+                        <motion.div
+                          key={impulse.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md relative"
+                        >
+                          {/* Индикатор новизны для событий < 2 часов */}
+                          {isNewEvent(impulse.created_at) && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
+                              transition={{ duration: 2, repeat: Infinity }}
+                              className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg"
+                            >
+                              <span className="text-xs">🔥</span>
+                            </motion.div>
+                          )}
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-white">
+                                {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
+                              </span>
+                              <span className="text-xs text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
+                                {impulse.category}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-white/40">
+                              <Clock size={12} />
+                              <span>{formatTime(impulse.created_at)}</span>
+                            </div>
+                          </div>
+                          <p className="text-sm text-white/80 leading-relaxed mb-2">
+                            {impulse.content}
+                          </p>
+                          <div className="flex items-center gap-1 text-xs text-purple-400 mt-2">
+                            <Clock size={12} />
+                            <span>{formatDateTime(impulse.created_at)}</span>
+                          </div>
+                          {impulse.location_lat && impulse.location_lng && (
+                            <div className="mt-2 flex items-center gap-1 text-xs text-white/40">
+                              <MapPin size={12} />
+                              <span>{isRussian ? 'С геолокацией' : 'With location'}</span>
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                  {/* Заглушки для призыва к действию */}
+                  {Array.from({ length: 5 - feed.length }).map((_, index) => (
+                    <motion.div
+                      key={`call-to-action-${index}`}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: (feed.length + index) * 0.1 }}
+                      className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-6 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
+                      onClick={() => {
+                        const category = categories[Math.floor(Math.random() * categories.length)];
+                        handleCategoryClick(category.id);
+                        if (window.Telegram?.WebApp?.HapticFeedback) {
+                          try {
+                            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                          } catch (e) {
+                            console.warn('Haptic error:', e);
+                          }
+                        }
+                      }}
+                    >
+                      <div className="text-2xl mb-2">✨</div>
+                      <p className="text-sm font-medium text-white/90 mb-1">
+                        {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
+                      </p>
+                      <p className="text-xs text-white/60">
+                        {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
+                      </p>
+                    </motion.div>
+                  ))}
+                </>
               ) : (
                 <div className="space-y-3">
                   <AnimatePresence>
@@ -490,8 +680,19 @@ function App() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -20 }}
                         transition={{ delay: index * 0.05 }}
-                        className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md"
+                        className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md relative"
                       >
+                        {/* Индикатор новизны для событий < 2 часов */}
+                        {isNewEvent(impulse.created_at) && (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                            className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg"
+                          >
+                            <span className="text-xs">🔥</span>
+                          </motion.div>
+                        )}
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-white">
@@ -506,9 +707,13 @@ function App() {
                             <span>{formatTime(impulse.created_at)}</span>
                           </div>
                         </div>
-                        <p className="text-sm text-white/80 leading-relaxed">
+                        <p className="text-sm text-white/80 leading-relaxed mb-2">
                           {impulse.content}
                         </p>
+                        <div className="flex items-center gap-1 text-xs text-purple-400 mt-2">
+                          <Clock size={12} />
+                          <span>{formatDateTime(impulse.created_at)}</span>
+                        </div>
                         {impulse.location_lat && impulse.location_lng && (
                           <div className="mt-2 flex items-center gap-1 text-xs text-white/40">
                             <MapPin size={12} />
@@ -530,45 +735,6 @@ function App() {
             activeCategory={activeCategory} 
             onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
-            isSelectionMode={isMapSelectionMode}
-            onLocationSelected={async (location) => {
-              const coords: [number, number] = [location.lat, location.lng];
-              setEventCoords(coords);
-              setIsMapSelectionMode(false);
-              
-              // Загружаем адрес для выбранной точки через обратное геокодирование
-              try {
-                const response = await fetch(
-                  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.lat}&lon=${location.lng}&zoom=18&addressdetails=1`,
-                  {
-                    headers: {
-                      'User-Agent': 'LingerApp/1.0',
-                    },
-                  }
-                );
-                const data = await response.json();
-                if (data.display_name) {
-                  setEventAddress(data.display_name);
-                }
-              } catch (error) {
-                console.warn('[onLocationSelected] Ошибка получения адреса:', error);
-                setEventAddress(`${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`);
-              }
-              
-              // Возвращаемся к модальному окну
-              setActiveTab('home');
-              setTimeout(() => {
-                setModalOpen(true);
-              }, 300);
-              
-              if (window.Telegram?.WebApp?.HapticFeedback) {
-                try {
-                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                } catch (e) {
-                  console.warn('Haptic error:', e);
-                }
-              }
-            }}
           />
         )}
       </div>
@@ -646,59 +812,149 @@ function App() {
                 <>
                   <div className="mb-4">
                     <label className="block text-sm text-white/70 mb-2">
-                      {isRussian ? 'Адрес события' : 'Event Address'}
+                      {isRussian ? 'Выбор места на карте' : 'Select location on map'}
                     </label>
-                    <div className="flex gap-2 mb-3">
-                      <input
-                        type="text"
-                        value={eventAddress}
-                        onChange={(e) => setEventAddress(e.target.value)}
-                        onBlur={(e) => {
-                          if (e.target.value.trim() && !isMapSelectionMode) {
-                            handleAddressSearch(e.target.value);
-                          }
-                        }}
-                        placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
-                        className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
-                        disabled={isMapSelectionMode}
-                        autoFocus={!isMapSelectionMode}
-                      />
-                      {isSearchingAddress && (
-                        <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
-                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    
+                    {/* Контейнер карты - 50% высоты модального окна */}
+                    <div className="relative rounded-2xl overflow-hidden mb-3 border border-white/20" style={{ height: '50vh', maxHeight: '300px', minHeight: '200px' }}>
+                      {!isMapSelectionMode ? (
+                        <div className="h-full flex items-center justify-center bg-black/40">
+                          <button
+                            onClick={() => {
+                              setIsMapSelectionMode(true);
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            className="px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 shadow-lg shadow-purple-500/30"
+                          >
+                            <MapPin size={18} />
+                            {isRussian ? 'Открыть карту для выбора места' : 'Open map to select location'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="h-full relative">
+                          <MapPicker
+                            onLocationSelected={(location, address) => {
+                              const coords: [number, number] = [location.lat, location.lng];
+                              setEventCoords(coords);
+                              setEventAddress(address);
+                              setIsMapSelectionMode(false);
+                              
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            initialZoom={16}
+                          />
+                          <button
+                            onClick={() => {
+                              setIsMapSelectionMode(false);
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            className="absolute top-2 right-2 z-[2001] px-3 py-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-xl text-white text-xs font-medium hover:bg-black/90 transition-colors"
+                          >
+                            {isRussian ? 'Отменить' : 'Cancel'}
+                          </button>
                         </div>
                       )}
                     </div>
-                    {isMapSelectionMode && (
-                      <div className="mb-3 p-3 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-300">
-                        {isRussian ? 'Кликните на карте, чтобы выбрать место' : 'Click on the map to select location'}
+
+                    {/* Блок с выбранным адресом (Glassmorphism) */}
+                    {(eventAddress || eventCoords) && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mb-3 p-4 rounded-2xl border border-white/30 backdrop-blur-xl"
+                        style={{
+                          backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                          backdropFilter: 'blur(20px)',
+                          WebkitBackdropFilter: 'blur(20px)',
+                        }}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg">
+                            <MapPin size={18} className="text-white" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-white/60 mb-1 font-medium">Выбранное место</p>
+                            <p className="text-sm font-semibold text-white leading-tight break-words mb-2">
+                              {eventAddress || (eventCoords ? `${eventCoords[0].toFixed(6)}, ${eventCoords[1].toFixed(6)}` : '')}
+                            </p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Альтернативный ввод адреса */}
+                    {!isMapSelectionMode && (
+                      <div className="mb-3">
+                        <label className="block text-xs text-white/60 mb-1">
+                          {isRussian ? 'Или введите адрес вручную' : 'Or enter address manually'}
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={eventAddress}
+                            onChange={(e) => setEventAddress(e.target.value)}
+                            onBlur={(e) => {
+                              if (e.target.value.trim()) {
+                                handleAddressSearch(e.target.value);
+                              }
+                            }}
+                            placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
+                            className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
+                            autoFocus={false}
+                          />
+                          {isSearchingAddress && (
+                            <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
+                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
-                    {!isMapSelectionMode && (
-                      <button
-                        onClick={() => {
-                          setIsMapSelectionMode(true);
-                          setActiveTab('map');
-                          if (window.Telegram?.WebApp?.HapticFeedback) {
-                            try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                            } catch (e) {
-                              console.warn('Haptic error:', e);
-                            }
-                          }
-                        }}
-                        className="w-full mb-3 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <MapPin size={16} />
-                        {isRussian ? 'Указать на карте вручную' : 'Select on map manually'}
-                      </button>
-                    )}
-                    {eventCoords && (
-                      <p className="mt-2 text-xs text-green-400 flex items-center gap-1">
-                        <MapPin size={12} />
-                        {isRussian ? 'Место выбрано!' : 'Location selected!'}
-                      </p>
-                    )}
+
+                    {/* Поля для даты и времени */}
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs text-white/60 mb-1">
+                          {isRussian ? 'Дата' : 'Date'}
+                        </label>
+                        <input
+                          type="date"
+                          value={eventDate}
+                          onChange={(e) => setEventDate(e.target.value)}
+                          min={new Date().toISOString().split('T')[0]}
+                          className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-4 py-3"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-white/60 mb-1">
+                          {isRussian ? 'Время' : 'Time'}
+                        </label>
+                        <input
+                          type="time"
+                          value={eventTime}
+                          onChange={(e) => setEventTime(e.target.value)}
+                          className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white px-4 py-3"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex gap-3">
@@ -714,7 +970,7 @@ function App() {
                     </button>
                     <button
                       onClick={handleSendMessage}
-                      disabled={isSubmitting || (!eventCoords && !isMapSelectionMode)}
+                      disabled={isSubmitting || (!eventCoords && !eventAddress.trim())}
                       className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isSubmitting 
@@ -722,23 +978,6 @@ function App() {
                         : (isRussian ? 'Создать событие' : 'Create Event')
                       }
                     </button>
-                    {isMapSelectionMode && (
-                      <button
-                        onClick={() => {
-                          setIsMapSelectionMode(false);
-                          if (window.Telegram?.WebApp?.HapticFeedback) {
-                            try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                            } catch (e) {
-                              console.warn('Haptic error:', e);
-                            }
-                          }
-                        }}
-                        className="w-full mt-2 rounded-2xl bg-white/5 border border-white/20 py-2 text-xs font-medium text-white/80 hover:bg-white/10 transition-colors"
-                      >
-                        {isRussian ? 'Отменить выбор на карте' : 'Cancel map selection'}
-                      </button>
-                    )}
                   </div>
                 </>
               )}

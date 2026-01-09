@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
 
@@ -133,6 +133,12 @@ async function getAddress(lat: number, lng: number): Promise<string> {
 // Оптимизированная загрузка импульсов: limit(50) и без адресов на старте
 async function loadImpulses(): Promise<ImpulseLocation[]> {
   try {
+    // Проверка подключения к Supabase
+    if (!isSupabaseConfigured) {
+      console.warn('⚠️ [loadImpulses] Supabase не настроен, пропускаем загрузку импульсов');
+      return [];
+    }
+
     console.log('[loadImpulses] Запрос данных из Supabase (limit 50)...');
     const { data, error } = await supabase
       .from('impulses')
@@ -141,7 +147,9 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
       .limit(50);
 
     if (error) {
-      console.error('[loadImpulses] Ошибка:', error);
+      console.error('❌ [loadImpulses] Ошибка Supabase:', error);
+      console.error('  Code:', error.code);
+      console.error('  Message:', error.message);
       return [];
     }
 
@@ -244,28 +252,26 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
     };
   }, [status]);
 
-  // ГАРАНТИРОВАННАЯ ИНИЦИАЛИЗАЦИЯ: только useEffect с requestAnimationFrame
+  // ГАРАНТИРОВАННАЯ ИНИЦИАЛИЗАЦИЯ: useEffect с setTimeout для Telegram WebView
   useEffect(() => {
     if (initAttemptedRef.current) {
       return;
     }
 
-    // Используем requestAnimationFrame для гарантии отрисовки DOM
-    requestAnimationFrame(() => {
-      // Дополнительный setTimeout для Telegram Mini App
-      setTimeout(() => {
-        const initMap = async () => {
-          // КРИТИЧЕСКАЯ ПРОВЕРКА: контейнер должен существовать
-          if (!mapRef.current) {
-            console.error('[MapScreen] mapRef.current is null после ожидания');
-            setStatus('error');
-            setErrorMessage('Контейнер карты не найден');
-            return;
-          }
+    // Даем Telegram WebView время отрендерить DOM
+    setTimeout(() => {
+    const initMap = async () => {
+        // КРИТИЧЕСКАЯ ПРОВЕРКА: контейнер должен существовать
+      if (!mapRef.current) {
+          console.error('[MapScreen] mapRef.current is null после ожидания');
+          setStatus('error');
+          setErrorMessage('Контейнер карты не найден');
+        return;
+      }
 
-          initAttemptedRef.current = true;
+        initAttemptedRef.current = true;
 
-          try {
+        try {
             console.log('[MapScreen] Начало инициализации карты...');
             
             // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
@@ -291,8 +297,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               setTimeout(() => {
                 if (mapInstanceRef.current?.invalidateSize) {
                   mapInstanceRef.current.invalidateSize();
-                }
-              }, 100);
+          }
+        }, 100);
             }
 
             // Плавное перемещение к локации (только для резервной локации)
@@ -381,9 +387,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         };
 
         initMap();
-      }, 150); // Дополнительная задержка для Telegram Mini App
-    });
-  }, []);
+      }, 150); // Задержка для Telegram WebView
+    }, []);
 
   // Обновляем данные при изменении refreshTrigger
   useEffect(() => {
@@ -585,7 +590,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                         setImpulses(prev => prev.map(i => 
                           i.id === impulse.id ? impulseWithAddress : i
                         ));
-                      } else {
+          } else {
                         impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
                       }
                     }

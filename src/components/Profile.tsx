@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trash2, Clock, X } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
@@ -49,6 +49,7 @@ const Profile: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ id: number; user_id: number; text: string; created_at: string; profiles?: { full_name?: string } }>>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const channelRef = React.useRef<any>(null);
 
   // Загрузка профиля из базы данных
   useEffect(() => {
@@ -78,20 +79,29 @@ const Profile: React.FC = () => {
 
           // Загружаем био из базы данных, если есть telegram_id
           if (telegramId) {
+            if (!isSupabaseConfigured) {
+              console.warn('⚠️ Supabase не настроен, пропускаем загрузку профиля');
+              setIsLoading(false);
+              return;
+            }
+
             const { data, error } = await supabase
               .from('profiles')
-              .select('bio, full_name')
+              .select('bio, full_name, avatar_url')
               .eq('id', telegramId)
               .single();
 
             if (error && error.code !== 'PGRST116') {
               // PGRST116 - это "not found", что нормально для нового пользователя
-              console.error('Error loading profile:', error);
+              console.error('❌ Error loading profile from Supabase:', error);
+              console.error('  Code:', error.code);
+              console.error('  Message:', error.message);
             } else if (data) {
               setProfile((prev) => ({
                 ...prev,
                 bio: data.bio || '',
                 firstName: data.full_name || prev.firstName,
+                photoUrl: data.avatar_url || prev.photoUrl,
               }));
             }
           }
@@ -136,9 +146,36 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Форматирование даты и времени для событий
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+    if (eventDate.getTime() === today.getTime()) {
+      // Сегодня
+      return isRussian 
+        ? `Сегодня в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+        : `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    } else {
+      // Другая дата
+      return isRussian
+        ? `${date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
+        : `${date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+  };
+
   useEffect(() => {
     const loadMyImpulses = async () => {
       if (!profile.telegramId) return;
+
+      if (!isSupabaseConfigured) {
+        console.warn('⚠️ Supabase не настроен, пропускаем загрузку моих импульсов');
+        setIsLoadingImpulses(false);
+        return;
+      }
 
       try {
         setIsLoadingImpulses(true);
@@ -149,14 +186,22 @@ const Profile: React.FC = () => {
           .order('created_at', { ascending: false });
 
         if (error) {
-          console.error('Error loading my impulses:', error);
+          console.error('❌ Error loading my impulses from Supabase:', error);
+          console.error('  Code:', error.code);
+          console.error('  Message:', error.message);
+          setMyImpulses([]);
         } else {
-          // Загружаем адреса для событий с координатами
+          // Загружаем адреса для событий с координатами (асинхронно, не блокируя отображение)
           const impulsesWithAddresses = await Promise.all(
             (data || []).map(async (impulse) => {
               if (impulse.location_lat && impulse.location_lng) {
-                const address = await getAddress(impulse.location_lat, impulse.location_lng);
-                return { ...impulse, address };
+                try {
+                  const address = await getAddress(impulse.location_lat, impulse.location_lng);
+                  return { ...impulse, address };
+                } catch (err) {
+                  console.warn('Error getting address for impulse:', impulse.id, err);
+                  return impulse;
+                }
               }
               return impulse;
             })
@@ -174,6 +219,13 @@ const Profile: React.FC = () => {
   }, [profile.telegramId]);
 
   const handleDeleteImpulse = async (id: number) => {
+    if (!profile.telegramId) return;
+
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
+
     try {
       setDeletingIds(prev => new Set(prev).add(id));
       
@@ -184,16 +236,32 @@ const Profile: React.FC = () => {
         .eq('creator_id', profile.telegramId);
 
       if (error) {
-        console.error('Error deleting impulse:', error);
-        WebApp.showAlert('Error deleting message');
+        console.error('❌ Error deleting impulse from Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
+        
+        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+        let errorMessage = isRussian ? 'Ошибка при удалении события' : 'Error deleting event';
+        if (error.code === '42501') {
+          errorMessage = isRussian ? 'Ошибка: Нет доступа к базе данных' : 'Error: Database access denied';
+        }
+        
+        WebApp.showAlert(errorMessage);
       } else {
         // Удаляем из локального состояния
         setMyImpulses(prev => prev.filter(impulse => impulse.id !== id));
-        WebApp.HapticFeedback.impactOccurred('light');
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+          } catch (e) {
+            console.warn('Haptic error:', e);
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to delete impulse:', err);
-      WebApp.showAlert('Error deleting message');
+      console.error('❌ Failed to delete impulse:', err);
+      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+      WebApp.showAlert(isRussian ? 'Ошибка при удалении события' : 'Error deleting event');
     } finally {
       setDeletingIds(prev => {
         const next = new Set(prev);
@@ -237,6 +305,12 @@ const Profile: React.FC = () => {
       ? (window as unknown as { Telegram?: { WebApp?: { HapticFeedback?: { impactOccurred?: (style: string) => void } } } }).Telegram?.WebApp
       : undefined);
 
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      setIsSaving(false);
+      return;
+    }
+
     try {
       // Сохраняем данные в Supabase методом upsert
       // id должен быть bigint из Telegram user.id
@@ -260,8 +334,18 @@ const Profile: React.FC = () => {
         .single();
 
       if (error) {
-        console.error('Error saving profile:', error);
-        // Optional: показать уведомление об ошибке
+        console.error('❌ Error saving profile to Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
+        
+        let errorMessage = 'Ошибка при сохранении профиля';
+        if (error.code === '23503') {
+          errorMessage = 'Ошибка: Пользователь не найден';
+        } else if (error.code === '42501') {
+          errorMessage = 'Ошибка: Нет доступа к базе данных';
+        }
+        
+        WebApp.showAlert(errorMessage);
       } else {
         console.log('Profile saved successfully:', data);
         // Optional: light haptic feedback when available
@@ -302,9 +386,28 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Загрузка сообщений чата события
+  // Загрузка сообщений чата события с Realtime подпиской
   const loadEventChat = async (eventId: number) => {
     setIsLoadingChat(true);
+    
+    // Проверка подключения к Supabase
+    if (!isSupabaseConfigured) {
+      console.warn('⚠️ Supabase не настроен, пропускаем загрузку чата');
+      setChatMessages([]);
+      setIsLoadingChat(false);
+      return;
+    }
+    
+    // Отписываемся от предыдущего канала, если есть
+    if (channelRef.current) {
+      try {
+        await channelRef.current.unsubscribe();
+        channelRef.current = null;
+      } catch (e) {
+        console.warn('Error unsubscribing from previous channel:', e);
+      }
+    }
+
     try {
       const { data, error } = await supabase
         .from('messages')
@@ -321,11 +424,77 @@ const Profile: React.FC = () => {
         .order('created_at', { ascending: true });
 
       if (error) {
-        console.error('Error loading chat messages:', error);
+        console.error('❌ Error loading chat messages from Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
         setChatMessages([]);
       } else {
-        setChatMessages(data || []);
+        // Преобразуем данные для корректной типизации
+        const messages = (data || []).map((msg: any) => ({
+          id: msg.id,
+          user_id: msg.user_id,
+          text: msg.text,
+          created_at: msg.created_at,
+          profiles: Array.isArray(msg.profiles) && msg.profiles.length > 0 
+            ? msg.profiles[0] 
+            : (typeof msg.profiles === 'object' && msg.profiles !== null ? msg.profiles : undefined),
+        }));
+        setChatMessages(messages);
       }
+
+      // Настраиваем Realtime подписку для мгновенных обновлений
+      const channel = supabase
+        .channel(`event_messages:${eventId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'messages',
+            filter: `event_id=eq.${eventId}`,
+          },
+          async (payload) => {
+            console.log('[Realtime] Новое сообщение:', payload);
+            // Перезагружаем сообщения при изменении
+            const { data: updatedData } = await supabase
+              .from('messages')
+              .select(`
+                id,
+                user_id,
+                text,
+                created_at,
+                profiles:user_id (
+                  full_name
+                )
+              `)
+              .eq('event_id', eventId)
+              .order('created_at', { ascending: true });
+            
+            if (updatedData) {
+              // Преобразуем данные для корректной типизации
+              const messages = updatedData.map((msg: any) => ({
+                id: msg.id,
+                user_id: msg.user_id,
+                text: msg.text,
+                created_at: msg.created_at,
+                profiles: Array.isArray(msg.profiles) && msg.profiles.length > 0 
+                  ? msg.profiles[0] 
+                  : (typeof msg.profiles === 'object' && msg.profiles !== null ? msg.profiles : undefined),
+              }));
+              setChatMessages(messages);
+              // Прокрутка вниз при новом сообщении
+              setTimeout(() => {
+                const chatContainer = document.querySelector('[data-chat-messages]');
+                if (chatContainer) {
+                  chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+              }, 100);
+            }
+          }
+        )
+        .subscribe();
+
+      channelRef.current = channel;
     } catch (err) {
       console.error('Failed to load chat messages:', err);
       setChatMessages([]);
@@ -334,9 +503,29 @@ const Profile: React.FC = () => {
     }
   };
 
+  // Cleanup при закрытии чата или размонтировании
+  useEffect(() => {
+    return () => {
+      if (channelRef.current) {
+        try {
+          channelRef.current.unsubscribe();
+          channelRef.current = null;
+        } catch (e) {
+          console.warn('Error unsubscribing from channel:', e);
+        }
+      }
+    };
+  }, [selectedEventChat]);
+
   // Отправка сообщения в чат события
   const sendChatMessage = async (eventId: number) => {
-    if (!newMessage.trim() || !profile.telegramId) return;
+    if (!newMessage.trim() || !profile.telegramId || !selectedEventChat) return;
+
+    // Проверка подключения к Supabase
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
 
     try {
       const { error } = await supabase
@@ -349,12 +538,32 @@ const Profile: React.FC = () => {
         });
 
       if (error) {
-        console.error('Error sending message:', error);
-        WebApp.showAlert('Ошибка при отправке сообщения');
+        console.error('❌ Error sending message to Supabase:', error);
+        console.error('  Code:', error.code);
+        console.error('  Message:', error.message);
+        
+        let errorMessage = 'Ошибка при отправке сообщения';
+        if (error.code === '23503') {
+          errorMessage = 'Ошибка: Пользователь или событие не найдены';
+        } else if (error.code === '42501') {
+          errorMessage = 'Ошибка: Нет доступа к базе данных';
+        }
+        
+        WebApp.showAlert(errorMessage);
       } else {
         setNewMessage('');
-        // Перезагружаем сообщения
+        // Realtime подписка автоматически обновит сообщения
+        // Но для надежности перезагружаем
         await loadEventChat(eventId);
+        
+        // Прокрутка вниз при новом сообщении
+        setTimeout(() => {
+          const chatContainer = document.querySelector('[data-chat-messages]');
+          if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          }
+        }, 150);
+        
         if (window.Telegram?.WebApp?.HapticFeedback) {
           try {
             window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
@@ -373,6 +582,12 @@ const Profile: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file || !profile.telegramId) return;
 
+    // Проверка подключения к Supabase
+    if (!isSupabaseConfigured) {
+      WebApp.showAlert('Ошибка: База данных не настроена');
+      return;
+    }
+
     // Проверяем размер файла (макс 5MB)
     if (file.size > 5 * 1024 * 1024) {
       WebApp.showAlert('Размер файла не должен превышать 5MB');
@@ -387,7 +602,7 @@ const Profile: React.FC = () => {
       const fileName = `${profile.telegramId}-${Date.now()}.${fileExt}`;
       const filePath = `avatars/${fileName}`;
 
-      // Загружаем файл в Supabase Storage
+      // 1. Загружаем файл в Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(filePath, file, {
@@ -396,22 +611,32 @@ const Profile: React.FC = () => {
         });
 
       if (uploadError) {
-        console.error('Error uploading avatar:', uploadError);
-        WebApp.showAlert('Ошибка при загрузке фото');
+        console.error('❌ Error uploading avatar to Supabase Storage:', uploadError);
+        console.error('  Message:', uploadError.message);
+        
+        let errorMessage = 'Ошибка при загрузке фото';
+        if (uploadError.message?.includes('Bucket') || uploadError.message?.includes('bucket')) {
+          errorMessage = 'Ошибка: Бакет "avatars" не найден. Создайте его в Supabase Storage.';
+        } else if (uploadError.message?.includes('permission') || uploadError.message?.includes('access')) {
+          errorMessage = 'Ошибка: Нет доступа к хранилищу. Проверьте настройки RLS.';
+        }
+        
+        WebApp.showAlert(errorMessage);
+        setIsUploadingAvatar(false);
         return;
       }
 
-      // Получаем публичный URL
+      // 2. Получаем публичный URL
       const { data: urlData } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
 
       const avatarUrl = urlData.publicUrl;
 
-      // Обновляем профиль с новым URL
+      // 3. Обновляем профиль с новым URL
       setProfile(prev => ({ ...prev, photoUrl: avatarUrl }));
 
-      // Сохраняем в базу данных
+      // 4. Обновляем строку в таблице profiles
       const { error: updateError } = await supabase
         .from('profiles')
         .upsert({
@@ -423,9 +648,20 @@ const Profile: React.FC = () => {
         });
 
       if (updateError) {
-        console.error('Error updating profile with avatar:', updateError);
-        WebApp.showAlert('Ошибка при сохранении фото');
+        console.error('❌ Error updating profile with avatar in Supabase:', updateError);
+        console.error('  Code:', updateError.code);
+        console.error('  Message:', updateError.message);
+        
+        let errorMessage = 'Ошибка при сохранении фото';
+        if (updateError.code === '23503') {
+          errorMessage = 'Ошибка: Пользователь не найден';
+        } else if (updateError.code === '42501') {
+          errorMessage = 'Ошибка: Нет доступа к базе данных';
+        }
+        
+        WebApp.showAlert(errorMessage);
       } else {
+        console.log('✅ Avatar uploaded and profile updated successfully');
         WebApp.showAlert('Фото успешно загружено!');
         if (window.Telegram?.WebApp?.HapticFeedback) {
           try {
@@ -612,7 +848,7 @@ const Profile: React.FC = () => {
                             }
                           }
                         }}
-                        className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-start justify-between gap-3 cursor-pointer hover:bg-white/10 transition-colors"
+                        className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-start justify-between gap-3 cursor-pointer hover:bg-white/10 transition-colors group"
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
@@ -624,38 +860,67 @@ const Profile: React.FC = () => {
                               <span>{formatTime(impulse.created_at)}</span>
                             </div>
                           </div>
-                          <p className="text-xs text-white/70 leading-relaxed line-clamp-2 mb-1">
-                            {impulse.content}
+                          <p className="text-xs text-white/70 leading-relaxed mb-2">
+                            <span className="font-semibold text-purple-400">{impulse.category}:</span> {impulse.content}
                           </p>
+                          {/* Адрес */}
                           {impulse.address && (
-                            <div className="flex items-center gap-1 text-[10px] text-white/50 mt-1">
+                            <div className="flex items-center gap-1 text-[10px] text-white/50 mb-1">
                               <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
                                 <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
                                 <circle cx="6" cy="4" r="1" fill="currentColor"/>
                               </svg>
-                              <span className="truncate">{impulse.address}</span>
+                              <span className="truncate">📍 {impulse.address}</span>
                             </div>
                           )}
+                          {/* Дата и время */}
+                          <div className="flex items-center gap-1 text-[10px] text-white/50">
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                              <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                              <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                            </svg>
+                            <span>📅 {formatDateTime(impulse.created_at)}</span>
+                          </div>
                         </div>
-                        <button
-                          onClick={() => {
-                            handleDeleteImpulse(impulse.id);
-                            if (window.Telegram?.WebApp?.HapticFeedback) {
-                              try {
-                                window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                              } catch (e) {
-                                console.warn('Haptic error:', e);
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedEventChat(impulse);
+                              loadEventChat(impulse.id);
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
                               }
-                            }
-                          }}
-                          disabled={deletingIds.has(impulse.id)}
-                          className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          <Trash2 
-                            size={14} 
-                            className="text-white/40 hover:text-red-400 transition-colors" 
-                          />
-                        </button>
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-[10px] font-semibold hover:opacity-90 transition-opacity whitespace-nowrap shadow-lg shadow-purple-500/30"
+                          >
+                            💬 Чат
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteImpulse(impulse.id);
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            disabled={deletingIds.has(impulse.id)}
+                            className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 
+                              size={12} 
+                              className="text-white/40 hover:text-red-400 transition-colors" 
+                            />
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
                   </AnimatePresence>
@@ -666,40 +931,36 @@ const Profile: React.FC = () => {
         </div>
       </div>
 
-      {/* Модальное окно для просмотра аватара на весь экран */}
+      {/* Модальное окно для просмотра аватара на весь экран (Full-screen) */}
       <AnimatePresence>
         {avatarModalOpen && profile.photoUrl && (
-          <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setAvatarModalOpen(false)}
+            className="fixed inset-0 bg-black z-[2000] flex items-center justify-center"
+          >
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setAvatarModalOpen(false)}
-              className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[2000] flex items-center justify-center p-4"
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full h-full flex items-center justify-center p-4"
             >
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                onClick={(e) => e.stopPropagation()}
-                className="relative max-w-full max-h-full"
+              <img
+                src={profile.photoUrl}
+                alt={profile.firstName || profile.username || 'User avatar'}
+                className="max-w-full max-h-full object-contain"
+              />
+              <button
+                onClick={() => setAvatarModalOpen(false)}
+                className="absolute top-4 right-4 p-3 bg-black/80 backdrop-blur-md rounded-full hover:bg-black/90 transition-colors z-10"
               >
-                <img
-                  src={profile.photoUrl}
-                  alt={profile.firstName || profile.username || 'User avatar'}
-                  className="max-w-full max-h-[90vh] object-contain rounded-2xl"
-                />
-                <button
-                  onClick={() => setAvatarModalOpen(false)}
-                  className="absolute top-4 right-4 p-2 bg-black/60 backdrop-blur-md rounded-full hover:bg-black/80 transition-colors"
-                >
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                    <path d="M18 6L6 18M6 6l12 12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              </motion.div>
+                <X size={24} className="text-white" />
+              </button>
             </motion.div>
-          </>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -711,31 +972,62 @@ const Profile: React.FC = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => {
-                setSelectedEventChat(null);
-                setChatMessages([]);
-                setNewMessage('');
-              }}
-              className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[2000]"
+                  onClick={() => {
+                    // Отписываемся от канала при закрытии
+                    if (channelRef.current) {
+                      try {
+                        channelRef.current.unsubscribe();
+                        channelRef.current = null;
+                      } catch (e) {
+                        console.warn('Error unsubscribing from channel:', e);
+                      }
+                    }
+                    setSelectedEventChat(null);
+                    setChatMessages([]);
+                    setNewMessage('');
+                  }}
+                  className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[2000]"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              onClick={(e) => e.stopPropagation()}
-              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-semibold text-white truncate">
-                    {selectedEventChat.category}: {selectedEventChat.content.substring(0, 40)}...
-                  </h3>
-                  {selectedEventChat.address && (
-                    <p className="text-xs text-white/50 mt-1 truncate">{selectedEventChat.address}</p>
-                  )}
-                </div>
+                onClick={(e) => e.stopPropagation()}
+                className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-semibold text-white truncate mb-1">
+                      {selectedEventChat.category}: {selectedEventChat.content.substring(0, 40)}...
+                    </h3>
+                    {selectedEventChat.address && (
+                      <p className="text-xs text-white/50 mt-1 truncate flex items-center gap-1">
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
+                          <circle cx="6" cy="4" r="1" fill="currentColor"/>
+                        </svg>
+                        {selectedEventChat.address}
+                      </p>
+                    )}
+                    <p className="text-xs text-white/50 mt-1 flex items-center gap-1">
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                        <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                      </svg>
+                      {formatDateTime(selectedEventChat.created_at)}
+                    </p>
+                  </div>
                 <button
                   onClick={() => {
+                    // Отписываемся от канала при закрытии
+                    if (channelRef.current) {
+                      try {
+                        channelRef.current.unsubscribe();
+                        channelRef.current = null;
+                      } catch (e) {
+                        console.warn('Error unsubscribing from channel:', e);
+                      }
+                    }
                     setSelectedEventChat(null);
                     setChatMessages([]);
                     setNewMessage('');
@@ -747,36 +1039,50 @@ const Profile: React.FC = () => {
               </div>
 
               {/* Область сообщений */}
-              <div className="flex-1 overflow-y-auto mb-4 space-y-3 min-h-[200px] max-h-[300px]">
+              <div 
+                data-chat-messages
+                className="flex-1 overflow-y-auto mb-4 space-y-3 min-h-[200px] max-h-[300px] pr-2"
+              >
                 {isLoadingChat ? (
                   <div className="text-center py-8 text-white/40 text-sm">
-                    {isRussian ? 'Загрузка сообщений...' : 'Loading messages...'}
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Загрузка сообщений...' : 'Loading messages...';
+                    })()}
                   </div>
                 ) : chatMessages.length === 0 ? (
                   <div className="text-center py-8 text-white/40 text-sm">
-                    {isRussian ? 'Пока нет сообщений' : 'No messages yet'}
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Пока нет сообщений. Будьте первым!' : 'No messages yet. Be the first!';
+                    })()}
                   </div>
                 ) : (
-                  chatMessages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`p-3 rounded-xl ${
-                        message.user_id === profile.telegramId
-                          ? 'bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-fuchsia-500/20 ml-auto max-w-[80%]'
-                          : 'bg-white/5 max-w-[80%]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium text-white">
-                          {message.profiles?.full_name || (message.user_id === profile.telegramId ? profile.firstName : 'Пользователь')}
-                        </span>
-                        <span className="text-[10px] text-white/40">
-                          {formatTime(message.created_at)}
-                        </span>
-                      </div>
-                      <p className="text-sm text-white/90 leading-relaxed">{message.text}</p>
-                    </div>
-                  ))
+                  chatMessages.map((message) => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return (
+                      <motion.div
+                        key={message.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`p-3 rounded-xl ${
+                          message.user_id === profile.telegramId
+                            ? 'bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-fuchsia-500/20 ml-auto max-w-[80%]'
+                            : 'bg-white/5 max-w-[80%]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-white">
+                            {message.profiles?.full_name || (message.user_id === profile.telegramId ? profile.firstName : (isRussian ? 'Пользователь' : 'User'))}
+                          </span>
+                          <span className="text-[10px] text-white/40">
+                            {formatTime(message.created_at)}
+                          </span>
+                        </div>
+                        <p className="text-sm text-white/90 leading-relaxed break-words">{message.text}</p>
+                      </motion.div>
+                    );
+                  })
                 )}
               </div>
 
@@ -787,17 +1093,24 @@ const Profile: React.FC = () => {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => {
-                    if (e.key === 'Enter' && newMessage.trim()) {
+                    if (e.key === 'Enter' && newMessage.trim() && selectedEventChat) {
                       sendChatMessage(selectedEventChat.id);
                     }
                   }}
-                  placeholder={isRussian ? 'Написать сообщение...' : 'Write a message...'}
+                  placeholder={(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Написать сообщение...' : 'Write a message...';
+                  })()}
                   className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
                   autoFocus
                 />
                 <button
-                  onClick={() => sendChatMessage(selectedEventChat.id)}
-                  disabled={!newMessage.trim()}
+                  onClick={() => {
+                    if (selectedEventChat) {
+                      sendChatMessage(selectedEventChat.id);
+                    }
+                  }}
+                  disabled={!newMessage.trim() || !selectedEventChat}
                   className="px-4 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white font-semibold shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
