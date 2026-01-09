@@ -826,6 +826,10 @@ function App() {
             onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
             onEventSelected={setSelectedMapEvent}
+            onBack={() => {
+              setActiveTab('home');
+              setSelectedMapEvent(null);
+            }}
           />
         )}
       </div>
@@ -1114,8 +1118,8 @@ function App() {
         )}
       </AnimatePresence>
 
-      {/* Таб-бар скрыт когда открыто событие на карте */}
-      {!selectedMapEvent && (
+      {/* Таб-бар скрыт полностью при переходе на карту */}
+      {activeTab !== 'map' && (
       <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 z-40">
         <div className="flex items-center justify-around h-16 px-4">
           <button

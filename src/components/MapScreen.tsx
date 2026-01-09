@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
@@ -99,6 +99,7 @@ function formatTime(dateString: string): string {
 
 // Функция форматирования расстояния
 function formatDistance(km: number): string {
+  if (km === Infinity || isNaN(km)) return '';
   if (km < 1) {
     return `${Math.round(km * 1000)} м`;
   }
@@ -222,9 +223,10 @@ interface MapScreenProps {
   isSelectionMode?: boolean; // Режим выбора точки на карте
   onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
   onEventSelected?: (impulse: ImpulseLocation | null) => void; // Коллбэк при выборе события (для скрытия таб-бара)
+  onBack?: () => void; // Коллбэк для возврата на главную
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -356,12 +358,17 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 
                 setSelectedImpulse(impulseWithAddress);
                 
-                // Вибрация при клике на маркер
+                // Вибрация при клике на маркер (selectionChanged для переключения между событиями)
                 if (window.Telegram?.WebApp?.HapticFeedback) {
                   try {
-                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    window.Telegram.WebApp.HapticFeedback.selectionChanged();
                   } catch (e) {
-                    console.warn('[MapScreen] Haptic error:', e);
+                    // Fallback на impactOccurred если selectionChanged не поддерживается
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    } catch (e2) {
+                      console.warn('[MapScreen] Haptic error:', e2);
+                    }
                   }
                 }
               }, activeCategory || null);
@@ -493,12 +500,17 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         
         setSelectedImpulse(impulseWithAddress);
         
-        // Вибрация при клике на маркер
+        // Вибрация при клике на маркер (selectionChanged для переключения между событиями)
         if (window.Telegram?.WebApp?.HapticFeedback) {
           try {
-            window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+            window.Telegram.WebApp.HapticFeedback.selectionChanged();
           } catch (e) {
-            console.warn('[MapScreen] Haptic error:', e);
+            // Fallback на impactOccurred если selectionChanged не поддерживается
+            try {
+              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+            } catch (e2) {
+              console.warn('[MapScreen] Haptic error:', e2);
+            }
           }
         }
       }, activeCategory || null);
@@ -600,8 +612,13 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     setSelectedImpulse(impulseWithAddress);
                     if (window.Telegram?.WebApp?.HapticFeedback) {
                       try {
-                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                      } catch (e) {}
+                        window.Telegram.WebApp.HapticFeedback.selectionChanged();
+                      } catch (e) {
+                        // Fallback на impactOccurred если selectionChanged не поддерживается
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                        } catch (e2) {}
+                      }
                     }
                   }, activeCategory || null);
                 }
@@ -633,21 +650,6 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
     }
   }, [selectedImpulse, onEventSelected]);
 
-  const handleFlyToMarker = () => {
-    if (selectedImpulse && mapInstanceRef.current) {
-      mapInstanceRef.current.flyTo(
-        { lat: selectedImpulse.location_lat, lng: selectedImpulse.location_lng },
-        15
-      );
-      
-      // Вибрация
-      if (window.Telegram?.WebApp?.HapticFeedback) {
-        try {
-          window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-        } catch (e) {}
-      }
-    }
-  };
 
   // КОНТЕЙНЕР КАРТЫ ВСЕГДА В DOM (просто скрыт во время загрузки)
   return (
@@ -752,88 +754,76 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </div>
       )}
 
-      {/* Баллун с детальной информацией об импульсе */}
-      <AnimatePresence>
-        {/* Кнопка "Назад" - левый верхний угол */}
-        {selectedImpulse && status === 'ready' && !isSelectionMode && (
-          <button
-            onClick={hideBalloon}
-            className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center hover:bg-white/30 transition-all shadow-lg"
-            style={{
-              backdropFilter: 'blur(15px)',
-              WebkitBackdropFilter: 'blur(15px)',
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M12 4l-6 6 6 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        )}
+      {/* Кнопка "Назад" - всегда видна в левом верхнем углу */}
+      {status === 'ready' && !isSelectionMode && (
+        <button
+          onClick={() => {
+            if (onBack) {
+              onBack();
+            }
+            hideBalloon();
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+              } catch (e) {
+                console.warn('[MapScreen] Haptic error:', e);
+              }
+            }
+          }}
+          className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center hover:bg-white/30 transition-all shadow-lg"
+          style={{
+            backdropFilter: 'blur(15px)',
+            WebkitBackdropFilter: 'blur(15px)',
+          }}
+        >
+          <ChevronLeft size={20} className="text-white" />
+        </button>
+      )}
 
-        {/* Компактное окно события - уменьшено в 2 раза */}
+      {/* Компактное окно события - одна строка [Категория] | [Название] | [Дистанция] */}
+      <AnimatePresence>
         {selectedImpulse && status === 'ready' && !isSelectionMode && (
-          <div className="absolute bottom-0 left-0 right-0 p-3 z-[1000]">
+          <div className="absolute bottom-0 left-0 right-0 p-2 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 50 }}
-              className="glass-card rounded-xl p-3 max-h-[150px] overflow-y-auto"
+              className="rounded-lg px-3 py-2 flex items-center gap-2"
               style={{
-                backgroundColor: 'rgba(18, 18, 18, 0.7)',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
                 backdropFilter: 'blur(15px)',
                 WebkitBackdropFilter: 'blur(15px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-semibold text-purple-400 px-1.5 py-0.5 bg-purple-400/10 rounded-full">
-                  {selectedImpulse.category}
-                </span>
-                {selectedImpulse.created_at && (
-                  <div className="flex items-center gap-1 text-[10px] text-white/50">
-                    <Clock size={10} />
-                    <span>{formatTime(selectedImpulse.created_at)}</span>
-                  </div>
-                )}
-              </div>
+              {/* Категория */}
+              <span className="text-[10px] font-semibold text-purple-400 px-1.5 py-0.5 bg-purple-400/10 rounded-full flex-shrink-0">
+                {selectedImpulse.category}
+              </span>
               
-              <p className="text-xs text-white/90 leading-tight mb-2 line-clamp-2">
+              {/* Разделитель */}
+              <span className="text-white/20">|</span>
+              
+              {/* Название (сокращенное) */}
+              <p className="text-xs text-white/90 leading-tight flex-1 min-w-0 line-clamp-1">
                 {selectedImpulse.content}
               </p>
               
-              {selectedImpulse.address && (
-                <div className="flex items-center gap-1 text-[10px] text-white/60 mb-2">
-                  <MapPin size={10} />
-                  <span className="truncate">{selectedImpulse.address}</span>
-                </div>
+              {/* Разделитель */}
+              {userLocation && selectedImpulse.location_lat && selectedImpulse.location_lng && (
+                <>
+                  <span className="text-white/20">|</span>
+                  {/* Дистанция */}
+                  <span className="text-[10px] text-white/60 flex-shrink-0">
+                    {formatDistance(calculateDistance(
+                      userLocation.lat,
+                      userLocation.lng,
+                      selectedImpulse.location_lat,
+                      selectedImpulse.location_lng
+                    ))}
+                  </span>
+                </>
               )}
-              
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={handleFlyToMarker}
-                  className="flex-1 px-3 py-1.5 bg-white/10 border border-white/20 text-white text-[10px] font-semibold rounded-lg hover:bg-white/20 transition-colors flex items-center justify-center gap-1"
-                >
-                  <MapPin size={10} />
-                  <span>Найти</span>
-                </button>
-                <button
-                  onClick={() => {
-                    if (window.Telegram?.WebApp?.HapticFeedback) {
-                      try {
-                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                      } catch (e) {}
-                    }
-                    if (window.Telegram?.WebApp?.showAlert) {
-                      window.Telegram.WebApp.showAlert('Вы присоединились!');
-                    } else {
-                      alert('Вы присоединились!');
-                    }
-                  }}
-                  className="flex-1 px-3 py-1.5 gradient-primary text-white text-[10px] font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-1"
-                >
-                  <span>✋</span>
-                  <span>Присоединиться</span>
-                </button>
-              </div>
             </motion.div>
           </div>
         )}
