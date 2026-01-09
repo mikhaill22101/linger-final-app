@@ -71,11 +71,11 @@ export const osmMapAdapter: MapAdapter = {
       }, 300); // Небольшая задержка, чтобы не спамить
     });
 
-    // Добавляем яркие тайлы CARTO Voyager (сочные цвета, нежно-голубая вода, ярко-зеленые парки)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    // Добавляем стандартные тайлы OpenStreetMap с POI (магазины, рестораны и т.д.)
+    // CSS фильтры увеличат яркость и насыщенность для сохранения яркого стиля
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
-      subdomains: 'abcd',
     }).addTo(map);
 
     let markers: LeafletMarker[] = [];
