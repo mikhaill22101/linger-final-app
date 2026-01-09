@@ -4,27 +4,37 @@ import { categoryColors } from './categoryColors';
 
 // Leaflet CSS подключен в src/index.css
 
-// Функция создания иконки маркера (маленькие светящиеся точки)
-function createMarkerIcon(color: string, isActive: boolean, size: number = 20): DivIcon {
+// Функция создания иконки маркера (яркие с градиентным свечением и эффектом левитации)
+function createMarkerIcon(color: string, isActive: boolean, isNearest: boolean = false, size: number = 20): DivIcon {
   // Маленькие маркеры по умолчанию, крупные только при клике
-  const baseSize = isActive ? size : 8; // 8px для обычных, 20px для активных
-  const shadowSize = isActive ? 20 : 6;
+  const baseSize = isActive ? size : 12; // 12px для обычных, 20px для активных
+  const shadowSize = isActive ? 25 : 10;
   const activeClass = isActive ? 'marker-active active-glow' : '';
+  const nearestClass = isNearest ? 'marker-nearest pulse-glow' : '';
+  
+  // Градиентное свечение в зависимости от категории
+  const glowColor = color;
+  const glowIntensity = isActive ? 1.5 : 0.8;
   
   return L.divIcon({
-    className: `custom-marker ${activeClass}`,
+    className: `custom-marker ${activeClass} ${nearestClass}`,
     html: `
-      <div class="${activeClass}" style="
+      <div class="${activeClass} ${nearestClass}" style="
         width: ${baseSize}px;
         height: ${baseSize}px;
-        background-color: ${color};
-        border: ${isActive ? '2px solid white' : '1px solid rgba(255, 255, 255, 0.5)'};
+        background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), ${color});
+        border: ${isActive ? '3px solid white' : '2px solid rgba(255, 255, 255, 0.9)'};
         border-radius: 50%;
-        box-shadow: 0 0 ${shadowSize}px ${color}, 0 0 ${shadowSize * 1.5}px ${color};
+        box-shadow: 
+          0 0 ${shadowSize * glowIntensity}px ${glowColor},
+          0 0 ${shadowSize * 1.5 * glowIntensity}px ${glowColor},
+          0 0 ${shadowSize * 2 * glowIntensity}px ${glowColor},
+          0 4px 12px rgba(0, 0, 0, 0.3);
         transition: all 0.3s ease;
         position: relative;
-        color: ${color};
         cursor: pointer;
+        transform: translateY(-2px);
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
       "></div>
     `,
     iconSize: [baseSize, baseSize],
@@ -61,8 +71,8 @@ export const osmMapAdapter: MapAdapter = {
       }, 300); // Небольшая задержка, чтобы не спамить
     });
 
-    // Добавляем темные тайлы OpenStreetMap (CartoDB Dark Matter)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    // Добавляем яркие тайлы CARTO Voyager (сочные цвета, нежно-голубая вода, ярко-зеленые парки)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 19,
       subdomains: 'abcd',
@@ -82,7 +92,7 @@ export const osmMapAdapter: MapAdapter = {
         markers = [];
         map.remove();
       },
-      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null) {
+      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number) {
         // Сохраняем данные
         currentImpulses = impulses;
         currentOnClick = onClick;
@@ -101,9 +111,10 @@ export const osmMapAdapter: MapAdapter = {
         filteredImpulses.forEach((impulse) => {
           const categoryName = impulse.category;
           const isActive = currentActiveCategory === categoryName;
+          const isNearest = nearestEventId === impulse.id;
           const color = categoryColors[categoryName] || '#3498db';
           
-          const icon = createMarkerIcon(color, isActive);
+          const icon = createMarkerIcon(color, isActive, isNearest);
           const marker = L.marker([impulse.location_lat, impulse.location_lng], { icon }).addTo(map);
           
           marker.on('click', () => {

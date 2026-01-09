@@ -323,6 +323,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             // Отображаем маркеры БЫСТРО (без адресов)
             if (loadedImpulses.length > 0) {
               // Рассчитываем близлежащие события
+              let nearestEventId: number | undefined;
               if (currentUserLocation) {
                 const eventsWithDistance = loadedImpulses
                   .map(impulse => ({
@@ -337,6 +338,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                   .sort((a, b) => a.distance - b.distance)
                   .slice(0, 3); // Только 3 ближайших
                 setNearbyEvents(eventsWithDistance);
+                nearestEventId = eventsWithDistance.length > 0 ? eventsWithDistance[0].id : undefined;
               }
 
               map.setMarkers(loadedImpulses, async (impulse) => {
@@ -372,7 +374,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     }
                   }
                 }
-              }, activeCategory || null);
+              }, activeCategory || null, nearestEventId);
             }
 
             // Очищаем таймаут и устанавливаем статус ready
@@ -426,6 +428,9 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         }
         
         if (mapInstanceRef.current && loadedImpulses.length > 0 && !isSelectionMode) {
+          // Определяем ближайшее событие для анимации пульсации
+          const nearestEventIdForRefresh = nearbyEvents.length > 0 ? nearbyEvents[0].id : undefined;
+          
           mapInstanceRef.current.setMarkers(loadedImpulses, async (impulse) => {
             let impulseWithAddress = impulse;
             if (!impulse.address) {
@@ -451,7 +456,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 console.warn('[MapScreen] Haptic error:', e);
               }
             }
-          }, activeCategory || null);
+          }, activeCategory || null, nearestEventIdForRefresh);
         }
       };
       reloadData();
@@ -482,6 +487,9 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
   // Обновляем маркеры при изменении активной категории
   useEffect(() => {
     if (mapInstanceRef.current && impulses.length > 0 && status === 'ready' && !isSelectionMode) {
+      // Определяем ближайшее событие для анимации пульсации
+      const nearestEventIdForCategory = nearbyEvents.length > 0 ? nearbyEvents[0].id : undefined;
+      
       mapInstanceRef.current.setMarkers(impulses, async (impulse) => {
         // Загружаем адрес при клике, если его еще нет
         let impulseWithAddress = impulse;
@@ -514,9 +522,9 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             }
           }
         }
-      }, activeCategory || null);
+      }, activeCategory || null, nearestEventIdForCategory);
     }
-  }, [activeCategory, impulses, status, isSelectionMode]);
+  }, [activeCategory, impulses, status, isSelectionMode, nearbyEvents]);
 
   // Cleanup
   useEffect(() => {
@@ -576,7 +584,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 const loadedImpulses = await loadImpulses();
                 setImpulses(loadedImpulses);
                 
-                // Обновляем близлежащие события
+                // Обновляем близлежащие события и определяем ближайшее для анимации
+                let nearestEventIdForRetry: number | undefined;
                 if (userLocation) {
                   const eventsWithDistance = loadedImpulses
                     .map(impulse => ({
@@ -591,6 +600,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     .sort((a, b) => a.distance - b.distance)
                     .slice(0, 3);
                   setNearbyEvents(eventsWithDistance);
+                  nearestEventIdForRetry = eventsWithDistance.length > 0 ? eventsWithDistance[0].id : undefined;
                 }
                 
                 if (loadedImpulses.length > 0) {
@@ -607,21 +617,21 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                         ));
           } else {
                         impulseWithAddress = { ...impulse, address: addressCacheRef.current.get(cacheKey) };
-                      }
-                    }
-                    
+        }
+      }
+
                     setSelectedImpulse(impulseWithAddress);
                     if (window.Telegram?.WebApp?.HapticFeedback) {
-                      try {
+        try {
                         window.Telegram.WebApp.HapticFeedback.selectionChanged();
-                      } catch (e) {
+        } catch (e) {
                         // Fallback на impactOccurred если selectionChanged не поддерживается
                         try {
                           window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
                         } catch (e2) {}
                       }
                     }
-                  }, activeCategory || null);
+                  }, activeCategory || null, nearestEventIdForRetry);
                 }
 
                 setStatus('ready');
@@ -653,7 +663,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
 
   // КОНТЕЙНЕР КАРТЫ ВСЕГДА В DOM (просто скрыт во время загрузки)
-  return (
+    return (
     <div className="relative w-full h-screen bg-black">
       {/* Контейнер карты ВСЕГДА в DOM, скрыт во время загрузки */}
       <div 
@@ -670,10 +680,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
       {/* Индикатор загрузки */}
       {status === 'loading' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black z-50">
-          <div className="text-center">
-            <div className="text-white/60 mb-2">Загрузка карты...</div>
-          </div>
+        <div className="text-center">
+          <div className="text-white/60 mb-2">Загрузка карты...</div>
         </div>
+      </div>
       )}
 
       {/* Экран ошибки */}
@@ -755,7 +765,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </div>
       )}
 
-      {/* Кнопка "Назад" - изящная Glassmorphism кнопка */}
+      {/* Кнопка "Назад" - ярко-белая и глянцевая */}
       {status === 'ready' && !isSelectionMode && (
         <button
           onClick={() => {
@@ -771,15 +781,16 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               }
             }
           }}
-          className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full flex items-center justify-center hover:scale-110 transition-all"
+          className="absolute top-4 left-4 z-[1001] w-11 h-11 rounded-full flex items-center justify-center hover:scale-110 transition-all shadow-lg"
           style={{
-            backgroundColor: 'rgba(255, 255, 255, 0.05)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1)',
           }}
         >
-          <ChevronLeft size={20} className="text-white/90" />
+          <ChevronLeft size={22} className="text-gray-800" strokeWidth={2.5} />
         </button>
       )}
 
@@ -803,23 +814,24 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               }}
               className="rounded-xl px-4 py-2.5 flex items-center gap-2"
               style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.3)',
-                backdropFilter: 'blur(20px)',
-                WebkitBackdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255, 255, 255, 0.05)',
+                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                backdropFilter: 'blur(15px)',
+                WebkitBackdropFilter: 'blur(15px)',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
               }}
             >
               {/* Эмодзи категории + Название категории + Дистанция */}
               <span className="text-sm">
                 {categoryEmojis[selectedImpulse.category] || '🔥'}
               </span>
-              <span className="text-xs font-medium text-white/90 flex-shrink-0">
-                {selectedImpulse.category}
-              </span>
+              <span className="text-xs font-semibold text-gray-900 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
+                  {selectedImpulse.category}
+                </span>
               {userLocation && selectedImpulse.location_lat && selectedImpulse.location_lng && (
                 <>
-                  <span className="text-white/30">•</span>
-                  <span className="text-xs text-white/70 flex-shrink-0">
+                  <span className="text-gray-600">•</span>
+                  <span className="text-xs font-medium text-gray-800 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
                     {formatDistance(calculateDistance(
                       userLocation.lat,
                       userLocation.lng,

@@ -89,6 +89,30 @@ body {
   transition: all 0.3s ease;
 }
 
+/* Анимация пульсации для ближайшего события */
+@keyframes pulseGlow {
+  0%, 100% {
+    transform: translateY(-2px) scale(1);
+    box-shadow: 
+      0 0 10px currentColor,
+      0 0 20px currentColor,
+      0 0 30px currentColor,
+      0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.15);
+    box-shadow: 
+      0 0 20px currentColor,
+      0 0 40px currentColor,
+      0 0 60px currentColor,
+      0 6px 16px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.marker-nearest.pulse-glow > div {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
 /* Гарантия размеров контейнера карты (КРИТИЧНО) */
 .map-container {
   height: 100vh !important;
@@ -107,6 +131,7 @@ body {
 .map-container .leaflet-container {
   height: 100% !important;
   width: 100% !important;
+  filter: saturate(1.2) brightness(1.1); /* Увеличиваем насыщенность и яркость карты */
 }
 
 /* Полностью скрываем кнопки масштаба карты */
