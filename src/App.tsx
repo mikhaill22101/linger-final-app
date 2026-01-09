@@ -341,6 +341,18 @@ function App() {
     }
   };
 
+  const handleNavigateToFeed = () => {
+    // Плавный переход на главный экран (Activity Feed)
+    setActiveTab('home');
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      try {
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      } catch (e) {
+        console.warn('Haptic feedback error:', e);
+      }
+    }
+  };
+
   const handleTabChange = (tab: 'home' | 'profile' | 'map') => {
     setActiveTab(tab);
     // Вибрация при переключении вкладок
@@ -871,6 +883,7 @@ function App() {
             onBack={() => {
               setActiveTab('home');
             }}
+            onNavigateToFeed={handleNavigateToFeed}
           />
         )}
       </div>

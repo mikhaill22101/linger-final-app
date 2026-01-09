@@ -225,9 +225,10 @@ interface MapScreenProps {
   onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
   onEventSelected?: (impulse: ImpulseLocation | null) => void; // Коллбэк при выборе события (для скрытия таб-бара)
   onBack?: () => void; // Коллбэк для возврата на главную
+  onNavigateToFeed?: () => void; // Коллбэк для перехода на экран "Все события"
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, onNavigateToFeed }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -799,7 +800,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </button>
       )}
 
-      {/* Ультра-узкое окно события - высота уменьшена в 2 раза, размытое матовое стекло */}
+      {/* Умное окно событий в стиле Zenly - Compact Glass, высота 60-70px */}
       <AnimatePresence>
         {selectedImpulse && status === 'ready' && !isSelectionMode && (
           <div className="absolute bottom-0 left-0 right-0 p-2 z-[1000]">
@@ -807,6 +808,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 50 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
               onAnimationStart={() => {
                 // Haptic feedback при появлении карточки
                 if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -817,26 +819,40 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                   }
                 }
               }}
-              className="rounded-xl px-3 py-1.5 flex items-center gap-2"
+              onClick={() => {
+                // Мгновенный переход на экран "Все события" при клике на любое место окна
+                if (onNavigateToFeed) {
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    } catch (e) {
+                      console.warn('[MapScreen] Haptic error:', e);
+                    }
+                  }
+                  onNavigateToFeed();
+                }
+              }}
+              className="rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-white/10 transition-all active:scale-95"
               style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                height: '65px',
+                backgroundColor: 'rgba(255, 255, 255, 0.4)',
                 backdropFilter: 'blur(20px)',
                 WebkitBackdropFilter: 'blur(20px)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.15)',
               }}
             >
-              {/* Интеллектуальная иконка на основе текста + Название категории + Дистанция */}
-              <span className="text-sm">
+              {/* Все данные в одну строку: Интеллектуальная иконка + Название категории + Дистанция */}
+              <span className="text-base leading-none">
                 {getSmartIcon(selectedImpulse.content, selectedImpulse.category).emoji}
               </span>
-              <span className="text-xs font-semibold text-gray-900 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
+              <span className="text-sm font-semibold text-gray-900 flex-shrink-0 leading-tight" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
                   {selectedImpulse.category}
                 </span>
               {userLocation && selectedImpulse.location_lat && selectedImpulse.location_lng && (
                 <>
-                  <span className="text-gray-600">•</span>
-                  <span className="text-xs font-medium text-gray-800 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
+                  <span className="text-gray-600 text-sm leading-none">•</span>
+                  <span className="text-xs font-medium text-gray-700 flex-shrink-0 leading-tight" style={{ textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)' }}>
                     {formatDistance(calculateDistance(
                       userLocation.lat,
                       userLocation.lng,

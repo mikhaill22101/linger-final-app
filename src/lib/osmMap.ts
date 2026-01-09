@@ -46,25 +46,25 @@ function createMarkerIcon(
       animationCSS = '';
   }
   
+  // Zenly Style: круглые маркеры с яркой заливкой, белой обводкой и мягкой тенью
   return L.divIcon({
-    className: `custom-marker ${activeClass} ${nearestClass} marker-animated-${animationType}`,
+    className: `custom-marker zenly-marker ${activeClass} ${nearestClass} marker-animated-${animationType}`,
     html: `
       <div class="${activeClass} ${nearestClass}" style="
         width: ${baseSize}px;
         height: ${baseSize}px;
-        background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), ${color});
-        border: ${isActive ? '3px solid white' : '2px solid rgba(255, 255, 255, 0.9)'};
+        background: ${color};
+        border: ${isActive ? '3px solid white' : '2.5px solid white'};
         border-radius: 50%;
         box-shadow: 
-          0 0 ${shadowSize * glowIntensity}px ${glowColor},
-          0 0 ${shadowSize * 1.5 * glowIntensity}px ${glowColor},
-          0 0 ${shadowSize * 2 * glowIntensity}px ${glowColor},
-          0 4px 12px rgba(0, 0, 0, 0.3);
-        transition: all 0.3s ease;
+          0 2px 8px rgba(0, 0, 0, 0.15),
+          0 4px 16px rgba(0, 0, 0, 0.1),
+          0 0 0 1px rgba(255, 255, 255, 0.3);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         position: relative;
         cursor: pointer;
         transform: translateY(-2px);
-        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
         display: flex;
         align-items: center;
         justify-content: center;
@@ -72,7 +72,7 @@ function createMarkerIcon(
         <span style="
           font-size: ${iconSize}; 
           line-height: 1; 
-          filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+          filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
           display: inline-block;
           ${animationCSS}
         ">${iconEmoji}</span>

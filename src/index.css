@@ -127,11 +127,18 @@ body {
   overflow: hidden !important;
 }
 
-/* Убеждаемся, что Leaflet карта имеет правильные размеры */
+/* Убеждаемся, что Leaflet карта имеет правильные размеры - Zenly Style */
 .map-container .leaflet-container {
   height: 100% !important;
   width: 100% !important;
-  filter: saturate(1.4) brightness(1.05); /* Максимально яркие и сочные цвета: лазурная вода, насыщенная зелень */
+  /* Zenly Style: яркие, насыщенные цвета с мягкостью и чистотой */
+  filter: saturate(1.5) contrast(1.1) brightness(1.05);
+}
+
+/* Стилизация элементов карты в стиле Zenly */
+.map-container .leaflet-container .leaflet-tile-container img {
+  /* Усиливаем яркость травы и воды через CSS */
+  filter: saturate(1.3) brightness(1.05);
 }
 
 /* Полностью скрываем кнопки масштаба карты */
