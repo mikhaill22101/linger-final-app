@@ -1476,36 +1476,80 @@ const Profile: React.FC = () => {
                           // Проверка, находится ли друг на событии
                           if (friend.current_event) {
                             return (
-                              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white border-2 border-black flex items-center justify-center text-xs">
+                              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white/90 backdrop-blur-sm border-2 border-white shadow-lg flex items-center justify-center text-xs z-10">
                                 {friend.current_event.icon || '📍'}
                               </div>
                             );
                           }
                           
                           // Проверка онлайна (last_seen менее 5 минут назад)
+                          let isOnline = false;
+                          let statusText = 'Статус неизвестен';
+                          
                           if (friend.last_seen) {
-                            const lastSeenDate = new Date(friend.last_seen);
-                            const now = new Date();
-                            const diffMs = now.getTime() - lastSeenDate.getTime();
-                            const diffMins = Math.floor(diffMs / 60000);
-                            const isOnline = diffMins < 5;
-                            
-                            return (
-                              <div 
-                                className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-black ${
-                                  isOnline ? 'bg-green-500' : 'bg-gray-500'
-                                }`}
-                                title={isOnline ? 'Онлайн' : `Был(а) ${diffMins} мин назад`}
-                              />
-                            );
+                            try {
+                              const lastSeenDate = new Date(friend.last_seen);
+                              const now = new Date();
+                              
+                              // Проверяем, что дата валидна и не в будущем
+                              if (!isNaN(lastSeenDate.getTime()) && lastSeenDate.getTime() <= now.getTime()) {
+                                const diffMs = now.getTime() - lastSeenDate.getTime();
+                                const diffMins = Math.floor(diffMs / 60000);
+                                
+                                // Онлайн если был активен менее 5 минут назад
+                                isOnline = diffMins >= 0 && diffMins < 5;
+                                
+                                if (isOnline) {
+                                  statusText = 'Онлайн';
+                                } else if (diffMins < 60) {
+                                  statusText = `Был(а) ${diffMins} мин назад`;
+                                } else if (diffMins < 1440) {
+                                  const hours = Math.floor(diffMins / 60);
+                                  statusText = `Был(а) ${hours} ч назад`;
+                                } else {
+                                  const days = Math.floor(diffMins / 1440);
+                                  statusText = `Был(а) ${days} дн назад`;
+                                }
+                              } else {
+                                // Если дата некорректна, считаем оффлайн
+                                isOnline = false;
+                                statusText = 'Статус недоступен';
+                              }
+                            } catch (err) {
+                              console.warn('Error parsing last_seen:', err, friend.last_seen);
+                              isOnline = false;
+                              statusText = 'Статус недоступен';
+                            }
+                          } else {
+                            // Если last_seen отсутствует, считаем оффлайн
+                            isOnline = false;
+                            statusText = 'Статус неизвестен';
                           }
                           
-                          // Если нет данных о last_seen, показываем серый индикатор
                           return (
                             <div 
-                              className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-black bg-gray-500"
-                              title="Статус неизвестен"
-                            />
+                              className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 shadow-lg ${
+                                isOnline 
+                                  ? 'bg-green-500 border-white' 
+                                  : 'bg-gray-500 border-white/60'
+                              }`}
+                              title={statusText}
+                              style={{
+                                boxShadow: isOnline 
+                                  ? '0 0 10px rgba(34, 197, 94, 0.7), 0 0 0 2px rgba(255, 255, 255, 0.5), inset 0 0 8px rgba(255, 255, 255, 0.3)' 
+                                  : '0 0 4px rgba(0, 0, 0, 0.3)',
+                              }}
+                            >
+                              {/* Внутренняя точка для лучшей видимости */}
+                              {isOnline && (
+                                <div 
+                                  className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full"
+                                  style={{
+                                    boxShadow: '0 0 4px rgba(255, 255, 255, 0.8)',
+                                  }}
+                                />
+                              )}
+                            </div>
                           );
                         })()}
                       </div>

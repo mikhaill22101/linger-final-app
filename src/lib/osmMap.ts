@@ -1,4 +1,4 @@
-import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon, LatLngBounds } from 'leaflet';
+import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon } from 'leaflet';
 import Supercluster from 'supercluster';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
 import { categoryColors } from './categoryColors';
@@ -26,8 +26,7 @@ interface ClusterPoint {
 // Функция создания иконки кластера (Glassmorphism стиль)
 function createClusterIcon(
   pointCount: number,
-  dominantCategory?: string,
-  dominantColor?: string
+  dominantCategory?: string
 ): DivIcon {
   const size = Math.min(50 + pointCount * 3, 80); // Размер кластера зависит от количества точек
   const iconSize = Math.max(16, Math.min(pointCount.toString().length * 8, 24));
@@ -209,7 +208,7 @@ export const osmMapAdapter: MapAdapter = {
     });
 
     // Haptic feedback при перемещении карты
-    let moveTimeout: NodeJS.Timeout | null = null;
+    let moveTimeout: ReturnType<typeof setTimeout> | null = null;
     map.on('moveend', () => {
       if (moveTimeout) {
         clearTimeout(moveTimeout);
@@ -255,9 +254,7 @@ export const osmMapAdapter: MapAdapter = {
     let currentOnLongPress: ((impulse: ImpulseLocation) => void) | null = null;
     let selectionMarker: LeafletMarker | null = null;
     let locationSelectCallback: ((location: GeoLocation) => void) | null = null;
-    let isSelectionMode = false;
     let userLocationMarker: LeafletMarker | null = null;
-    let currentUserLocation: GeoLocation | null = null;
 
     // Функция обновления кластеров и маркеров
     const updateClusters = () => {
@@ -325,9 +322,7 @@ export const osmMapAdapter: MapAdapter = {
           
           const dominantCategory = Object.entries(categoryCounts)
             .sort(([, a], [, b]) => b - a)[0]?.[0];
-          const dominantColor = dominantCategory ? (categoryColors[dominantCategory] || '#3498db') : undefined;
-          
-          const clusterIcon = createClusterIcon(pointCount, dominantCategory, dominantColor);
+          const clusterIcon = createClusterIcon(pointCount, dominantCategory);
           const clusterMarker = L.marker([lat, lng], { icon: clusterIcon });
           
           // При клике на кластер - приближаемся (flyTo) до распада на отдельные маркеры
@@ -384,7 +379,7 @@ export const osmMapAdapter: MapAdapter = {
           }
           
           // Обработка длительного нажатия
-          let longPressTimer: NodeJS.Timeout | null = null;
+          let longPressTimer: ReturnType<typeof setTimeout> | null = null;
           let isLongPress = false;
           let clickHandled = false;
           
@@ -508,7 +503,7 @@ export const osmMapAdapter: MapAdapter = {
         }
         map.remove();
       },
-      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) {
+      setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, _nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) {
         currentImpulses = impulses;
         currentOnClick = onClick;
         currentActiveCategory = activeCategory || null;
@@ -539,44 +534,55 @@ export const osmMapAdapter: MapAdapter = {
         map.invalidateSize();
       },
       setUserLocation(location: GeoLocation | null) {
-        currentUserLocation = location;
-        
         if (userLocationMarker) {
           userLocationMarker.remove();
           userLocationMarker = null;
         }
         
         if (location) {
-          // Улучшенный индикатор текущего местоположения (светящаяся синяя точка)
+          // Улучшенный индикатор текущего местоположения (яркая светящаяся синяя точка)
           const userLocationIcon = L.divIcon({
             className: 'user-location-marker-linger',
             html: `
-              <div style="
+              <div class="user-location-pulse-container" style="
                 width: 24px;
                 height: 24px;
-                background: #3b82f6;
-                border: 3px solid white;
-                border-radius: 50%;
-                box-shadow: 
-                  0 0 0 6px rgba(59, 130, 246, 0.4),
-                  0 0 0 12px rgba(59, 130, 246, 0.25),
-                  0 0 0 18px rgba(59, 130, 246, 0.15),
-                  0 4px 16px rgba(59, 130, 246, 0.6);
-                animation: userLocationPulseLinger 2s ease-in-out infinite;
                 position: relative;
-                z-index: 2000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
               ">
+                <!-- Расходящиеся кольца пульсации для индикатора пользователя -->
+                <div class="user-pulse-ring user-pulse-ring-1"></div>
+                <div class="user-pulse-ring user-pulse-ring-2"></div>
+                <div class="user-pulse-ring user-pulse-ring-3"></div>
+                
+                <!-- Основной индикатор -->
                 <div style="
-                  position: absolute;
-                  top: 50%;
-                  left: 50%;
-                  transform: translate(-50%, -50%);
-                  width: 10px;
-                  height: 10px;
-                  background: white;
+                  width: 24px;
+                  height: 24px;
+                  background: #3b82f6;
+                  border: 3px solid white;
                   border-radius: 50%;
-                  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
-                "></div>
+                  box-shadow: 
+                    0 0 0 4px rgba(59, 130, 246, 0.5),
+                    0 0 0 8px rgba(59, 130, 246, 0.3),
+                    0 0 0 12px rgba(59, 130, 246, 0.2),
+                    0 4px 20px rgba(59, 130, 246, 0.7);
+                  position: relative;
+                  z-index: 10;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                ">
+                  <div style="
+                    width: 10px;
+                    height: 10px;
+                    background: white;
+                    border-radius: 50%;
+                    box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
+                  "></div>
+                </div>
               </div>
             `,
             iconSize: [24, 24],
@@ -587,11 +593,22 @@ export const osmMapAdapter: MapAdapter = {
             icon: userLocationIcon,
             interactive: false,
             zIndexOffset: 2000, // Всегда сверху всех маркеров и кластеров
+            bubblingMouseEvents: false,
           }).addTo(map);
+          
+          // Добавляем haptic feedback при "приземлении" камеры
+          setTimeout(() => {
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+              } catch (e) {
+                // Игнорируем ошибки
+              }
+            }
+          }, 1800); // После завершения flyTo
         }
       },
       setLocationSelectMode(enabled: boolean, onSelect: (location: GeoLocation) => void) {
-        isSelectionMode = enabled;
         locationSelectCallback = enabled ? onSelect : null;
 
         if (enabled) {
