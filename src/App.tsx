@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
 import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
+import { categoryEmojis } from './lib/categoryColors';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
 import MapScreen from './components/MapScreen';
@@ -797,138 +798,40 @@ function App() {
                       {isRussian ? 'Отмена' : 'Cancel'}
                     </button>
                     <button
-                      onClick={handleSendMessage}
+                      onClick={() => {
+                        if (messageContent.trim()) {
+                          setStep('location');
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }
+                      }}
                       disabled={isSubmitting || !messageContent.trim()}
                       className="flex-1 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isRussian ? 'Указать место' : 'Specify Location'}
+                      {(() => {
+                        const category = categories.find(cat => cat.id === selectedCategory);
+                        const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : '';
+                        const emoji = categoryEmojis[categoryName] || '✨';
+                        return isRussian ? `Выберем время ${emoji}` : `Choose Time ${emoji}`;
+                      })()}
                     </button>
                   </div>
                 </>
               )}
 
-              {/* Шаг 2: Выбор места */}
+              {/* Шаг 2: Выбор времени и места */}
               {step === 'location' && (
                 <>
-                  <div className="mb-4">
+                  <div className="mb-4 relative">
                     <label className="block text-sm text-white/70 mb-2">
-                      {isRussian ? 'Выбор места на карте' : 'Select location on map'}
+                      {isRussian ? 'Выберите дату и время события' : 'Select event date and time'}
                     </label>
                     
-                    {/* Контейнер карты - 50% высоты модального окна */}
-                    <div className="relative rounded-2xl overflow-hidden mb-3 border border-white/20" style={{ height: '50vh', maxHeight: '300px', minHeight: '200px' }}>
-                      {!isMapSelectionMode ? (
-                        <div className="h-full flex items-center justify-center bg-black/40">
-                          <button
-                            onClick={() => {
-                              setIsMapSelectionMode(true);
-                              if (window.Telegram?.WebApp?.HapticFeedback) {
-                                try {
-                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                                } catch (e) {
-                                  console.warn('Haptic error:', e);
-                                }
-                              }
-                            }}
-                            className="px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-sm font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 shadow-lg shadow-purple-500/30"
-                          >
-                            <MapPin size={18} />
-                            {isRussian ? 'Открыть карту для выбора места' : 'Open map to select location'}
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="h-full relative">
-                          <MapPicker
-                            onLocationSelected={(location, address) => {
-                              const coords: [number, number] = [location.lat, location.lng];
-                              setEventCoords(coords);
-                              setEventAddress(address);
-                              setIsMapSelectionMode(false);
-                              
-                              if (window.Telegram?.WebApp?.HapticFeedback) {
-                                try {
-                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                                } catch (e) {
-                                  console.warn('Haptic error:', e);
-                                }
-                              }
-                            }}
-                            initialZoom={16}
-                          />
-                          <button
-                            onClick={() => {
-                              setIsMapSelectionMode(false);
-                              if (window.Telegram?.WebApp?.HapticFeedback) {
-                                try {
-                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                                } catch (e) {
-                                  console.warn('Haptic error:', e);
-                                }
-                              }
-                            }}
-                            className="absolute top-2 right-2 z-[2001] px-3 py-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-xl text-white text-xs font-medium hover:bg-black/90 transition-colors"
-                          >
-                            {isRussian ? 'Отменить' : 'Cancel'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Блок с выбранным адресом (Glassmorphism) */}
-                    {(eventAddress || eventCoords) && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="mb-3 p-4 rounded-2xl border border-white/30 backdrop-blur-xl"
-                        style={{
-                          backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                          backdropFilter: 'blur(20px)',
-                          WebkitBackdropFilter: 'blur(20px)',
-                        }}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg">
-                            <MapPin size={18} className="text-white" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-white/60 mb-1 font-medium">Выбранное место</p>
-                            <p className="text-sm font-semibold text-white leading-tight break-words mb-2">
-                              {eventAddress || (eventCoords ? `${eventCoords[0].toFixed(6)}, ${eventCoords[1].toFixed(6)}` : '')}
-                            </p>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-
-                    {/* Альтернативный ввод адреса */}
-                    {!isMapSelectionMode && (
-                      <div className="mb-3">
-                        <label className="block text-xs text-white/60 mb-1">
-                          {isRussian ? 'Или введите адрес вручную' : 'Or enter address manually'}
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={eventAddress}
-                            onChange={(e) => setEventAddress(e.target.value)}
-                            onBlur={(e) => {
-                              if (e.target.value.trim()) {
-                                handleAddressSearch(e.target.value);
-                              }
-                            }}
-                            placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
-                            className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
-                            autoFocus={false}
-                          />
-                          {isSearchingAddress && (
-                            <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
-                              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Поля для даты и времени */}
                     <div className="grid grid-cols-2 gap-3 mb-4">
                       <div>
@@ -955,6 +858,131 @@ function App() {
                         />
                       </div>
                     </div>
+
+                    {/* Плавающая кнопка выбора адреса (Pin Button) */}
+                    <div className="relative mb-4">
+                      <label className="block text-sm text-white/70 mb-2">
+                        {isRussian ? 'Выбор места' : 'Select location'}
+                      </label>
+                      
+                      {/* Контейнер карты - показывается только при isMapSelectionMode */}
+                      {isMapSelectionMode && (
+                        <div className="relative rounded-2xl overflow-hidden mb-3 border border-white/20" style={{ height: '50vh', maxHeight: '300px', minHeight: '200px' }}>
+                          <div className="h-full relative">
+                            <MapPicker
+                              onLocationSelected={(location, address) => {
+                                const coords: [number, number] = [location.lat, location.lng];
+                                setEventCoords(coords);
+                                setEventAddress(address);
+                                setIsMapSelectionMode(false);
+                                
+                                if (window.Telegram?.WebApp?.HapticFeedback) {
+                                  try {
+                                    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                  } catch (e) {
+                                    console.warn('Haptic error:', e);
+                                  }
+                                }
+                              }}
+                              initialZoom={16}
+                            />
+                            <button
+                              onClick={() => {
+                                setIsMapSelectionMode(false);
+                                if (window.Telegram?.WebApp?.HapticFeedback) {
+                                  try {
+                                    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                  } catch (e) {
+                                    console.warn('Haptic error:', e);
+                                  }
+                                }
+                              }}
+                              className="absolute top-2 right-2 z-[2001] px-3 py-1.5 bg-black/80 backdrop-blur-md border border-white/20 rounded-xl text-white text-xs font-medium hover:bg-black/90 transition-colors"
+                            >
+                              {isRussian ? 'Отменить' : 'Cancel'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Плавающая кнопка булавки - справа внизу */}
+                      {!isMapSelectionMode && (
+                        <div className="relative">
+                          {/* Блок с выбранным адресом (Glassmorphism) */}
+                          {(eventAddress || eventCoords) && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="mb-3 p-4 rounded-2xl border border-white/30 backdrop-blur-xl"
+                              style={{
+                                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                                backdropFilter: 'blur(20px)',
+                                WebkitBackdropFilter: 'blur(20px)',
+                              }}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg">
+                                  <MapPin size={18} className="text-white" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs text-white/60 mb-1 font-medium">{isRussian ? 'Выбранное место' : 'Selected location'}</p>
+                                  <p className="text-sm font-semibold text-white leading-tight break-words mb-2">
+                                    {eventAddress || (eventCoords ? `${eventCoords[0].toFixed(6)}, ${eventCoords[1].toFixed(6)}` : '')}
+                                  </p>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+
+                          {/* Альтернативный ввод адреса */}
+                          <div className="mb-3">
+                            <label className="block text-xs text-white/60 mb-1">
+                              {isRussian ? 'Или введите адрес вручную' : 'Or enter address manually'}
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={eventAddress}
+                                onChange={(e) => setEventAddress(e.target.value)}
+                                onBlur={(e) => {
+                                  if (e.target.value.trim()) {
+                                    handleAddressSearch(e.target.value);
+                                  }
+                                }}
+                                placeholder={isRussian ? 'Введите адрес (например, Сестрорецк, ул. Мира 1)' : 'Enter address (e.g., Sestroretsk, Mira St. 1)'}
+                                className="flex-1 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3"
+                                autoFocus={false}
+                              />
+                              {isSearchingAddress && (
+                                <div className="flex items-center justify-center w-12 rounded-2xl bg-white/5 border border-white/20">
+                                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Плавающая кнопка булавки */}
+                          <button
+                            onClick={() => {
+                              setIsMapSelectionMode(true);
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            className="absolute bottom-0 right-0 w-14 h-14 rounded-full bg-white/90 backdrop-blur-md border-2 border-white/30 shadow-lg hover:bg-white hover:shadow-xl transition-all flex items-center justify-center z-10"
+                            style={{
+                              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+                            }}
+                          >
+                            <MapPin size={24} className="text-indigo-600" strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex gap-3">
@@ -975,7 +1003,7 @@ function App() {
                     >
                       {isSubmitting 
                         ? (isRussian ? 'Создание...' : 'Creating...') 
-                        : (isRussian ? 'Создать событие' : 'Create Event')
+                        : (isRussian ? 'Готово' : 'Create')
                       }
                     </button>
                   </div>
