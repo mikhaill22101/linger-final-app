@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Clock, MapPin } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
@@ -220,9 +221,10 @@ interface MapScreenProps {
   refreshTrigger?: number; // При изменении этого значения карта обновляет данные
   isSelectionMode?: boolean; // Режим выбора точки на карте
   onLocationSelected?: (location: GeoLocation) => void; // Коллбэк при выборе точки
+  onEventSelected?: (impulse: ImpulseLocation | null) => void; // Коллбэк при выборе события (для скрытия таб-бара)
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -619,7 +621,17 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
   const hideBalloon = () => {
     setSelectedImpulse(null);
+    if (onEventSelected) {
+      onEventSelected(null);
+    }
   };
+
+  // Уведомляем родительский компонент об изменении выбранного события
+  useEffect(() => {
+    if (onEventSelected) {
+      onEventSelected(selectedImpulse);
+    }
+  }, [selectedImpulse, onEventSelected]);
 
   const handleFlyToMarker = () => {
     if (selectedImpulse && mapInstanceRef.current) {
@@ -742,85 +754,84 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
       {/* Баллун с детальной информацией об импульсе */}
       <AnimatePresence>
+        {/* Кнопка "Назад" - левый верхний угол */}
         {selectedImpulse && status === 'ready' && !isSelectionMode && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 z-[1000]">
+          <button
+            onClick={hideBalloon}
+            className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center hover:bg-white/30 transition-all shadow-lg"
+            style={{
+              backdropFilter: 'blur(15px)',
+              WebkitBackdropFilter: 'blur(15px)',
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M12 4l-6 6 6 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
+
+        {/* Компактное окно события - уменьшено в 2 раза */}
+        {selectedImpulse && status === 'ready' && !isSelectionMode && (
+          <div className="absolute bottom-0 left-0 right-0 p-3 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 50 }}
-              className="bg-black/95 backdrop-blur-xl border border-white/20 rounded-2xl p-4 max-h-[300px] overflow-y-auto"
+              className="glass-card rounded-xl p-3 max-h-[150px] overflow-y-auto"
+              style={{
+                backgroundColor: 'rgba(18, 18, 18, 0.7)',
+                backdropFilter: 'blur(15px)',
+                WebkitBackdropFilter: 'blur(15px)',
+              }}
             >
-              <div className="flex items-start justify-between mb-3">
-                <span className="text-xs font-semibold text-purple-400 px-2 py-1 bg-purple-400/10 rounded-full">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-semibold text-purple-400 px-1.5 py-0.5 bg-purple-400/10 rounded-full">
                   {selectedImpulse.category}
                 </span>
-                <button
-                  onClick={hideBalloon}
-                  className="text-white/60 hover:text-white transition-colors"
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </button>
+                {selectedImpulse.created_at && (
+                  <div className="flex items-center gap-1 text-[10px] text-white/50">
+                    <Clock size={10} />
+                    <span>{formatTime(selectedImpulse.created_at)}</span>
+                  </div>
+                )}
               </div>
               
-              <h3 className="text-base font-semibold text-white mb-2">Событие</h3>
-              
-              <p className="text-sm text-white/90 leading-relaxed mb-3">
+              <p className="text-xs text-white/90 leading-tight mb-2 line-clamp-2">
                 {selectedImpulse.content}
               </p>
               
-              {selectedImpulse.created_at && (
-                <div className="flex items-center gap-2 text-xs text-white/60 mb-2">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
-                    <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                  </svg>
-                  <span>{formatTime(selectedImpulse.created_at)}</span>
-                </div>
-              )}
-              
               {selectedImpulse.address && (
-                <div className="flex items-center gap-2 text-xs text-white/60 mb-3">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
-                    <circle cx="6" cy="4" r="1" fill="currentColor"/>
-                  </svg>
-                  <span>{selectedImpulse.address}</span>
+                <div className="flex items-center gap-1 text-[10px] text-white/60 mb-2">
+                  <MapPin size={10} />
+                  <span className="truncate">{selectedImpulse.address}</span>
                 </div>
               )}
               
-              {selectedImpulse.author_name && (
-                <p className="text-xs text-white/50 mb-3">
-                  — {selectedImpulse.author_name}
-                </p>
-              )}
-              
-              <div className="flex gap-2 mt-3">
+              <div className="flex gap-2 mt-2">
                 <button
                   onClick={handleFlyToMarker}
-                  className="flex-1 px-4 py-2 bg-white/10 border border-white/20 text-white text-xs font-semibold rounded-xl hover:bg-white/20 transition-colors"
+                  className="flex-1 px-3 py-1.5 bg-white/10 border border-white/20 text-white text-[10px] font-semibold rounded-lg hover:bg-white/20 transition-colors flex items-center justify-center gap-1"
                 >
-                  📍 Найти на карте
+                  <MapPin size={10} />
+                  <span>Найти</span>
                 </button>
                 <button
                   onClick={() => {
-                    // Вибрация
                     if (window.Telegram?.WebApp?.HapticFeedback) {
                       try {
                         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
                       } catch (e) {}
                     }
-                    // Показываем alert для теста
                     if (window.Telegram?.WebApp?.showAlert) {
                       window.Telegram.WebApp.showAlert('Вы присоединились!');
                     } else {
                       alert('Вы присоединились!');
                     }
                   }}
-                  className="flex-1 px-4 py-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity"
+                  className="flex-1 px-3 py-1.5 gradient-primary text-white text-[10px] font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-1"
                 >
-                  ✋ Присоединиться
+                  <span>✋</span>
+                  <span>Присоединиться</span>
                 </button>
               </div>
             </motion.div>

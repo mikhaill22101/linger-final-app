@@ -128,6 +128,7 @@ function App() {
   const [eventDate, setEventDate] = useState<string>('');
   const [eventTime, setEventTime] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedMapEvent, setSelectedMapEvent] = useState<any>(null); // Для скрытия таб-бара
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -155,8 +156,8 @@ function App() {
 
   useEffect(() => {
     try {
-      WebApp.ready();
-      WebApp.expand();
+    WebApp.ready();
+    WebApp.expand();
       
       // Получаем геопозицию пользователя
       (async () => {
@@ -181,7 +182,7 @@ function App() {
           console.warn('⚠️ Не удалось подключиться к Supabase');
         }
         
-        loadFeed();
+    loadFeed();
       })();
     } catch (e) {
       console.error('Error in App useEffect:', e);
@@ -319,7 +320,7 @@ function App() {
     // Вибрация при переключении вкладок
     if (WebApp.HapticFeedback) {
       try {
-        WebApp.HapticFeedback.impactOccurred('light');
+    WebApp.HapticFeedback.impactOccurred('light');
       } catch (e) {
         console.warn('Haptic feedback error:', e);
       }
@@ -460,9 +461,9 @@ function App() {
       } else {
         // Fallback на текущую геопозицию, если адрес не указан
         const location = await getCurrentLocation();
-        if (location) {
-          locationData.location_lat = location.lat;
-          locationData.location_lng = location.lng;
+      if (location) {
+        locationData.location_lat = location.lat;
+        locationData.location_lng = location.lng;
         }
       }
 
@@ -605,28 +606,28 @@ function App() {
                 const isActive = activeCategory === cat.id;
                 
                 return (
-                  <div key={cat.id} className="relative overflow-visible">
-                    <motion.button
-                      onClick={() => handleCategoryClick(cat.id)}
+                <div key={cat.id} className="relative overflow-visible">
+                  <motion.button
+                    onClick={() => handleCategoryClick(cat.id)}
                       className={`relative w-full p-5 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 z-10 ${
                         isActive ? 'border-white/30' : ''
                       }`}
-                    >
-                      <div className="flex items-center gap-4">
+                  >
+                    <div className="flex items-center gap-4">
                         <div className={`category-ring ${categoryClass} ${isActive ? 'active' : ''}`}>
                           <div className="category-icon-wrapper">
                             <cat.icon size={22} className="text-white/80" />
                           </div>
                         </div>
                         <span className="text-lg font-light tracking-wide text-white">
-                          {isRussian ? cat.label.ru : cat.label.en}
-                        </span>
-                      </div>
-                      <span className="text-xs text-white/40">
-                        {isRussian ? 'Нажмите' : 'Tap'}
+                        {isRussian ? cat.label.ru : cat.label.en}
                       </span>
-                    </motion.button>
-                  </div>
+                    </div>
+                    <span className="text-xs text-white/40">
+                      {isRussian ? 'Нажмите' : 'Tap'}
+                    </span>
+                  </motion.button>
+                </div>
                 );
               })}
             </main>
@@ -639,50 +640,51 @@ function App() {
                 <div className="text-center py-8 text-white/40">
                   {isRussian ? 'Загрузка...' : 'Loading...'}
                 </div>
-              ) : feed.length === 0 ? (
-                <div className="space-y-3">
-                  {/* Заглушки для пустого состояния */}
-                  {Array.from({ length: 3 }).map((_, index) => (
-                    <motion.div
-                      key={`placeholder-${index}`}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-6 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
-                      onClick={() => {
-                        const category = categories[Math.floor(Math.random() * categories.length)];
-                        handleCategoryClick(category.id);
-                        if (window.Telegram?.WebApp?.HapticFeedback) {
-                          try {
-                            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                          } catch (e) {
-                            console.warn('Haptic error:', e);
-                          }
-                        }
-                      }}
-                    >
-                      <div className="text-2xl mb-2">✨</div>
-                      <p className="text-sm font-medium text-white/90 mb-1">
-                        {isRussian ? 'Создайте первое событие!' : 'Create your first event!'}
-                      </p>
-                      <p className="text-xs text-white/60">
-                        {isRussian ? 'Нажмите на категорию выше, чтобы начать' : 'Tap a category above to get started'}
-                      </p>
-                    </motion.div>
-                  ))}
-                </div>
               ) : (() => {
-                // Логика количества ячеек:
-                // 1 событие → 1 событие + 1 ячейка = 2
-                // 2 события → 2 события + 1 ячейка = 3
-                // 3+ событий → 3 события + 1 ячейка = 4
+                // Строгая логика количества ячеек:
+                // 0 событий → 0 карточек + 1 кнопка создания = 1 ячейка
+                // 1 событие → 1 карточка + 1 кнопка создания = 2 ячейки
+                // 2 события → 2 карточки + 1 кнопка создания = 3 ячейки
+                // 3+ событий → 3 карточки + 1 кнопка создания = 4 ячейки
                 const maxRealEvents = feed.length >= 3 ? 3 : feed.length;
                 const eventsToShow = feed.slice(0, maxRealEvents);
-                const shouldShowCallToAction = true; // Всегда показываем последнюю ячейку
+                // Всегда показываем только одну кнопку создания в конце
+                const shouldShowCallToAction = true;
+                
+                // Если нет событий, показываем только одну кнопку создания
+                if (feed.length === 0) {
+                  return (
+                    <div className="space-y-3">
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
+                        onClick={() => {
+                          const category = categories[Math.floor(Math.random() * categories.length)];
+                          handleCategoryClick(category.id);
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-3 flex-1">
+                          <span className="text-xl flex-shrink-0">✨</span>
+                          <p className="text-sm font-bold text-white leading-tight flex-1">
+                            {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
+                          </p>
+                        </div>
+                      </motion.div>
+                </div>
+                  );
+                }
 
                 return (
-                  <div className="space-y-3">
-                    <AnimatePresence>
+                <div className="space-y-3">
+                  <AnimatePresence>
                       {/* Реальные события */}
                       {eventsToShow.map((impulse, index) => {
                         // Форматируем дату события для компактного отображения
@@ -707,12 +709,12 @@ function App() {
                           : formatTime(impulse.created_at);
 
                         return (
-                          <motion.div
-                            key={impulse.id}
+                      <motion.div
+                        key={impulse.id}
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: 20 }}
-                            transition={{ delay: index * 0.05 }}
+                        transition={{ delay: index * 0.05 }}
                             className="compact-event-card relative"
                           >
                             {/* Индикатор новизны для событий < 2 часов */}
@@ -753,15 +755,15 @@ function App() {
                               </div>
                               <div className="flex flex-col min-w-0">
                                 <span className="text-sm font-bold text-white leading-tight truncate">
-                                  {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
-                                </span>
-                              </div>
-                            </div>
+                              {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
+                            </span>
+                          </div>
+                        </div>
                             
                             {/* Центр: Текст события (одна строка) */}
                             <p className="text-sm font-medium text-white/90 leading-tight flex-1 min-w-0 line-clamp-1 px-2">
-                              {impulse.content}
-                            </p>
+                          {impulse.content}
+                        </p>
                             
                             {/* Справа: Дата и дистанция */}
                             <div className="flex flex-col items-end gap-1 flex-shrink-0">
@@ -775,8 +777,8 @@ function App() {
                                 <div className="flex items-center gap-1 text-[11px] text-white/60">
                                   <MapPin size={10} />
                                   <span className="whitespace-nowrap">{formatDistance(impulse.distance)}</span>
-                                </div>
-                              )}
+                          </div>
+                        )}
                             </div>
                           </motion.div>
                         );
@@ -810,7 +812,7 @@ function App() {
                         </div>
                       </motion.div>
                     )}
-                  </div>
+                </div>
                 );
               })()}
             </section>
@@ -823,6 +825,7 @@ function App() {
             activeCategory={activeCategory} 
             onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
+            onEventSelected={setSelectedMapEvent}
           />
         )}
       </div>
@@ -868,23 +871,23 @@ function App() {
               {/* Шаг 1: Описание */}
               {step === 'description' && (
                 <>
-                  <textarea
-                    value={messageContent}
-                    onChange={(e) => setMessageContent(e.target.value)}
+              <textarea
+                value={messageContent}
+                onChange={(e) => setMessageContent(e.target.value)}
                     placeholder={isRussian ? 'Напишите описание события...' : 'Write event description...'}
-                    className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
-                    autoFocus
-                  />
+                className="w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 resize-none min-h-[120px] px-4 py-3 leading-relaxed mb-4"
+                autoFocus
+              />
 
-                  <div className="flex gap-3">
-                    <button
-                      onClick={handleCloseModal}
-                      disabled={isSubmitting}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCloseModal}
+                  disabled={isSubmitting}
                       className="flex-1 rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium text-white/80 hover:bg-white/10 transition-colors disabled:opacity-50"
-                    >
-                      {isRussian ? 'Отмена' : 'Cancel'}
-                    </button>
-                    <button
+                >
+                  {isRussian ? 'Отмена' : 'Cancel'}
+                </button>
+                <button
                       onClick={() => {
                         if (messageContent.trim()) {
                           setStep('location');
@@ -897,7 +900,7 @@ function App() {
                           }
                         }
                       }}
-                      disabled={isSubmitting || !messageContent.trim()}
+                  disabled={isSubmitting || !messageContent.trim()}
                       className="flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {(() => {
@@ -1097,13 +1100,13 @@ function App() {
                       }}
                       disabled={isSubmitting || (!eventCoords && !eventAddress.trim())}
                       className="flex-1 rounded-2xl gradient-primary py-3 text-sm font-semibold text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isSubmitting 
+                >
+                  {isSubmitting 
                         ? (isRussian ? 'Создание...' : 'Creating...') 
                         : (isRussian ? 'Готово' : 'Create')
-                      }
-                    </button>
-                  </div>
+                  }
+                </button>
+              </div>
                 </>
               )}
             </motion.div>
@@ -1111,6 +1114,8 @@ function App() {
         )}
       </AnimatePresence>
 
+      {/* Таб-бар скрыт когда открыто событие на карте */}
+      {!selectedMapEvent && (
       <nav className="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-md border-t border-white/10 z-40">
         <div className="flex items-center justify-around h-16 px-4">
           <button
@@ -1148,6 +1153,7 @@ function App() {
           </button>
         </div>
       </nav>
+      )}
     </div>
   );
 }

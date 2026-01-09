@@ -150,17 +150,20 @@ body {
   overflow: hidden;
 }
 
-/* Анимация бегущей волны для категорий (conic-gradient) */
-@keyframes conicRotate {
-  0% {
+/* Анимация покачивания для категорий (tilt/swing) */
+@keyframes categoryTilt {
+  0%, 100% {
     transform: rotate(0deg);
   }
-  100% {
-    transform: rotate(360deg);
+  25% {
+    transform: rotate(4deg);
+  }
+  75% {
+    transform: rotate(-4deg);
   }
 }
 
-/* Стили для категорий с анимацией бегущей волны */
+/* Стили для категорий с анимацией покачивания */
 .category-ring {
   position: relative;
   border-radius: 50%;
@@ -172,13 +175,19 @@ body {
     var(--category-color-1)
   );
   background-size: 200% 200%;
-  animation: conicRotate 3s linear infinite;
   transition: all 0.3s ease;
 }
 
-.category-ring.active {
-  animation: conicRotate 1.5s linear infinite;
+.category-icon-wrapper {
+  animation: categoryTilt 3s ease-in-out infinite;
+}
+
+.category-ring.active .category-icon-wrapper {
+  animation: categoryTilt 1.5s ease-in-out infinite;
   box-shadow: 0 0 20px var(--category-color-1), 0 0 40px var(--category-color-2);
+}
+
+.category-ring.active {
   transform: scale(1.1);
 }
 
@@ -196,36 +205,42 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Цвета для категорий (для conic-gradient) */
+/* Цвета для категорий согласно психологии (для conic-gradient) */
 .category-spark,
 .category-impulse {
-  --category-color-1: #ff6b35;
-  --category-color-2: #ff4b2b;
+  /* Ярко-оранжевый (энергия, энтузиазм) */
+  --category-color-1: #ff8c00;
+  --category-color-2: #ff6b35;
 }
 
 .category-artgo {
-  --category-color-1: #4a90e2;
-  --category-color-2: #6366f1;
+  /* Насыщенный синий (доверие, планирование) */
+  --category-color-1: #1e40af;
+  --category-color-2: #3b82f6;
 }
 
 .category-walk {
-  --category-color-1: #10b981;
-  --category-color-2: #34d399;
+  /* Изумрудно-зеленый (рост, новизна, спокойствие) */
+  --category-color-1: #059669;
+  --category-color-2: #10b981;
 }
 
 .category-tasty {
+  /* Теплый желтый/янтарный (аппетит, гостеприимство) */
   --category-color-1: #f59e0b;
   --category-color-2: #fbbf24;
 }
 
 .category-sync {
-  --category-color-1: #ec4899;
+  /* Дерзкий фуксия/фиолетовый (творчество, драйв) */
+  --category-color-1: #d946ef;
   --category-color-2: #a855f7;
 }
 
 .category-hobby {
+  /* Бирюзовый (дружелюбие, баланс) */
   --category-color-1: #06b6d4;
-  --category-color-2: #67e8f9;
+  --category-color-2: #22d3ee;
 }
 
 /* Компактная карточка события */
