@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -143,6 +143,57 @@ function App() {
       setUserName(tgUser.first_name || tgUser.username || '');
     }
   }, []);
+
+  // Функция определения категории на основе текста поиска
+  const detectCategoryFromText = (text: string): string | null => {
+    if (!text || text.trim().length < 2) return null;
+    
+    const normalizedText = text.toLowerCase().trim();
+    
+    // Маппинг ключевых слов к категориям
+    const categoryKeywords: Record<string, string[]> = {
+      'spark': ['искра', 'импульс', 'энергия', 'драйв', 'адреналин', 'экстрим', 'экшн', 'активность', 'динамика', 'вечеринка', 'бар', 'туса', 'вписка'],
+      'artgo': ['афиша', 'событие', 'мероприятие', 'концерт', 'выставка', 'фестиваль', 'шоу', 'спектакль', 'театр', 'кино', 'фильм'],
+      'walk': ['исследуй', 'прогулка', 'гулять', 'парк', 'лес', 'природа', 'поход', 'горы', 'озеро', 'набережная', 'пройтись'],
+      'tasty': ['гастротур', 'еда', 'ресторан', 'кафе', 'пицца', 'бургер', 'суши', 'обед', 'ужин', 'кушать', 'кофе', 'завтрак'],
+      'sync': ['ритме', 'музыка', 'танцы', 'клуб', 'диско', 'гитара', 'караоке', 'dj', 'концерт', 'петь'],
+      'hobby': ['хобби', 'интересы', 'увлечения', 'отдых', 'расслабиться', 'чилаут', 'кино', 'фильм', 'сериал', 'кальян'],
+      'impulse': ['спорт', 'тренировка', 'зал', 'бег', 'пробежка', 'футбол', 'баскетбол', 'волейбол', 'теннис', 'плавание'],
+    };
+    
+    // Ищем совпадения
+    for (const [categoryId, keywords] of Object.entries(categoryKeywords)) {
+      for (const keyword of keywords) {
+        if (normalizedText.includes(keyword)) {
+          return categoryId;
+        }
+      }
+    }
+    
+    return null;
+  };
+
+  // Обработка изменения поискового запроса
+  useEffect(() => {
+    if (searchQuery.trim().length >= 2) {
+      const detectedCategory = detectCategoryFromText(searchQuery);
+      if (detectedCategory) {
+        setHighlightedCategory(detectedCategory);
+        // Haptic feedback при автоматическом подборе
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.selectionChanged();
+          } catch (e) {
+            console.warn('Haptic error:', e);
+          }
+        }
+      } else {
+        setHighlightedCategory(null);
+      }
+    } else {
+      setHighlightedCategory(null);
+    }
+  }, [searchQuery]);
 
   // Функция расчета расстояния между двумя точками (Haversine formula)
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -338,7 +389,9 @@ function App() {
   const handleCategoryClick = (id: string) => {
     setSelectedCategory(id);
     setStep('description'); // Переходим к шагу описания
-    setMessageContent('');
+    setMessageContent(searchQuery || ''); // Используем текст из поиска как описание
+    setSearchQuery(''); // Очищаем поиск
+    setHighlightedCategory(null);
     setEventAddress('');
     setEventCoords(null);
     
@@ -392,9 +445,12 @@ function App() {
     setModalOpen(false);
     setSelectedCategory(null);
     setMessageContent('');
+    setSearchQuery('');
+    setHighlightedCategory(null);
     setStep('category');
     setEventAddress('');
     setEventCoords(null);
+    setIsMapSelectionMode(false);
     // Сбрасываем активную категорию при закрытии модального окна
     setActiveCategory(null);
   };
@@ -698,11 +754,6 @@ function App() {
                 )}
               </button>
 
-              {/* Логотип по центру */}
-              <h1 className="text-xl font-light tracking-[0.2em] text-white">
-                LINGER
-              </h1>
-
               {/* Кнопки справа */}
               <div className="flex items-center gap-2">
                 {/* Кнопка просмотра друзей */}
@@ -732,6 +783,8 @@ function App() {
                     setModalOpen(true);
                     setStep('category');
                     setSelectedCategory(null);
+                    setSearchQuery('');
+                    setHighlightedCategory(null);
                     if (window.Telegram?.WebApp?.HapticFeedback) {
                       try {
                         window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
@@ -923,8 +976,11 @@ function App() {
                         transition={{ delay: (eventsToShow.length) * 0.05 }}
                         className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
                         onClick={() => {
-                          const category = categories[Math.floor(Math.random() * categories.length)];
-                          handleCategoryClick(category.id);
+                          setModalOpen(true);
+                          setStep('category');
+                          setSelectedCategory(null);
+                          setSearchQuery('');
+                          setHighlightedCategory(null);
                           if (window.Telegram?.WebApp?.HapticFeedback) {
                             try {
                               window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
@@ -1027,16 +1083,17 @@ function App() {
               className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               onClick={(e) => e.stopPropagation()}
-              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-50 max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+              className="fixed inset-x-0 bottom-0 bg-black/95 backdrop-blur-xl border-t border-white/20 rounded-t-3xl p-6 z-50 max-h-[85vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-light text-white">
                   {step === 'category' 
-                    ? (isRussian ? 'Выберите категорию' : 'Choose Category')
+                    ? (isRussian ? 'Создать событие' : 'Create Event')
                     : step === 'description'
                     ? (isRussian ? 'Опишите событие' : 'Describe Event')
                     : (isRussian ? 'Выберите место и время' : 'Select Location & Time')
@@ -1056,38 +1113,65 @@ function App() {
                 <div className={`flex-1 h-1 rounded-full ${step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
               </div>
 
-              {/* Шаг 0: Выбор категории */}
+              {/* Шаг 0: Умный поиск и выбор категории */}
               {step === 'category' && (
-                <div className="space-y-3">
-                  {categories.map((cat) => {
-                    const categoryClass = `category-${cat.id}`;
-                    
-                    return (
-                      <motion.button
-                        key={cat.id}
-                        onClick={() => {
-                          handleCategoryClick(cat.id);
-                        }}
-                        className={`relative w-full p-4 rounded-2xl flex items-center justify-between glass-card hover:bg-black/40 hover:border-white/20 transition-all duration-500 ${
-                          selectedCategory === cat.id ? 'border-white/30' : ''
-                        }`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className={`category-ring ${categoryClass} ${selectedCategory === cat.id ? 'active' : ''}`}>
+                <div className="space-y-4">
+                  {/* Поле поиска */}
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={20} />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={isRussian ? 'Что планируешь?' : 'What are you planning?'}
+                      className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* Сетка категорий */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {categories.map((cat) => {
+                      const categoryClass = `category-${cat.id}`;
+                      const isHighlighted = highlightedCategory === cat.id;
+                      const isSelected = selectedCategory === cat.id;
+                      
+                      return (
+                        <motion.button
+                          key={cat.id}
+                          onClick={() => {
+                            handleCategoryClick(cat.id);
+                          }}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          className={`relative p-4 rounded-2xl flex flex-col items-center justify-center gap-3 glass-card hover:bg-black/40 transition-all duration-300 ${
+                            isSelected ? 'border-2 border-white/50' : isHighlighted ? 'border-2 border-purple-400/50 scale-105' : 'border border-white/20'
+                          }`}
+                          style={{
+                            boxShadow: isHighlighted ? '0 0 20px rgba(168, 85, 247, 0.4)' : undefined,
+                          }}
+                        >
+                          <div className={`category-ring ${categoryClass} ${isSelected || isHighlighted ? 'active' : ''}`}>
                             <div className="category-icon-wrapper">
-                              <cat.icon size={22} className="text-white/80" />
+                              <cat.icon size={28} className="text-white/80" />
                             </div>
                           </div>
-                          <span className="text-lg font-light tracking-wide text-white">
+                          <span className="text-sm font-light tracking-wide text-white text-center">
                             {isRussian ? cat.label.ru : cat.label.en}
                           </span>
-                        </div>
-                        <span className="text-xs text-white/40">
-                          {selectedCategory === cat.id ? (isRussian ? 'Выбрано' : 'Selected') : (isRussian ? 'Выбрать' : 'Select')}
-                        </span>
-                      </motion.button>
-                    );
-                  })}
+                          {isHighlighted && !isSelected && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center"
+                            >
+                              <span className="text-xs">✨</span>
+                            </motion.div>
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
