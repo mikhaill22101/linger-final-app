@@ -18,6 +18,9 @@ interface Impulse {
   location_lat?: number;
   location_lng?: number;
   distance?: number;
+  event_date?: string;
+  event_time?: string;
+  address?: string;
 }
 
 const categories = [
@@ -190,7 +193,7 @@ function App() {
       // Исправленный запрос: показываем все активные impulses, отсортированные по created_at DESC
       const { data, error } = await supabase
         .from('impulses')
-        .select('*')
+        .select('*, event_date, event_time, address')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -248,6 +251,9 @@ function App() {
           location_lng: item.location_lng,
           author_name: profilesMap.get(item.creator_id) || undefined,
           distance,
+          event_date: item.event_date,
+          event_time: item.event_time,
+          address: item.address,
         };
       });
 
@@ -642,55 +648,88 @@ function App() {
                   <div className="space-y-3">
                     <AnimatePresence>
                       {/* Реальные события */}
-                      {eventsToShow.map((impulse, index) => (
-                        <motion.div
-                          key={impulse.id}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -20 }}
-                          transition={{ delay: index * 0.05 }}
-                          className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md relative"
-                        >
-                          {/* Индикатор новизны для событий < 2 часов */}
-                          {isNewEvent(impulse.created_at) && (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.8 }}
-                              animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
-                              transition={{ duration: 2, repeat: Infinity }}
-                              className="absolute -top-2 -right-2 w-6 h-6 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg"
-                            >
-                              <span className="text-xs">🔥</span>
-                            </motion.div>
-                          )}
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-white">
-                                {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
-                              </span>
-                              <span className="text-xs text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
-                                {impulse.category}
-                              </span>
+                      {eventsToShow.map((impulse, index) => {
+                        // Форматируем дату события для компактного отображения
+                        const eventDate = impulse.event_date ? new Date(impulse.event_date) : null;
+                        const eventTime = impulse.event_time || '';
+                        const dateTimeStr = eventDate 
+                          ? (() => {
+                              const now = new Date();
+                              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                              const eventDateOnly = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+                              
+                              if (eventDateOnly.getTime() === today.getTime()) {
+                                return isRussian 
+                                  ? `Сегодня ${eventTime || ''}`.trim()
+                                  : `Today ${eventTime || ''}`.trim();
+                              } else {
+                                return isRussian
+                                  ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${eventTime || ''}`.trim()
+                                  : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${eventTime || ''}`.trim();
+                              }
+                            })()
+                          : formatTime(impulse.created_at);
+
+                        return (
+                          <motion.div
+                            key={impulse.id}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -20 }}
+                            transition={{ delay: index * 0.05 }}
+                            className="bg-white/5 border border-white/10 rounded-xl p-2.5 backdrop-blur-md relative"
+                          >
+                            {/* Индикатор новизны для событий < 2 часов */}
+                            {isNewEvent(impulse.created_at) && (
+                              <motion.div
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
+                                transition={{ duration: 2, repeat: Infinity }}
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg z-10"
+                              >
+                                <span className="text-[10px]">🔥</span>
+                              </motion.div>
+                            )}
+                            
+                            {/* Верхний ряд: Имя автора, категория, время публикации */}
+                            <div className="flex items-center justify-between mb-1.5 gap-2">
+                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                <span className="text-sm font-bold text-white truncate">
+                                  {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
+                                </span>
+                                <span className="text-[10px] text-white/40 px-1.5 py-0.5 bg-white/5 rounded-full flex-shrink-0">
+                                  {impulse.category}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[12px] text-white/40 flex-shrink-0">
+                                <Clock size={10} />
+                                <span>{formatTime(impulse.created_at)}</span>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1 text-xs text-white/40">
-                              <Clock size={12} />
-                              <span>{formatTime(impulse.created_at)}</span>
+                            
+                            {/* Нижний ряд: Описание (слева) + Дата и адрес (справа) */}
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm font-bold text-white/90 leading-tight flex-1 min-w-0 line-clamp-2">
+                                {impulse.content}
+                              </p>
+                              <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                                {dateTimeStr && (
+                                  <div className="flex items-center gap-1 text-[12px] text-white/50">
+                                    <Clock size={10} />
+                                    <span className="whitespace-nowrap">{dateTimeStr}</span>
+                                  </div>
+                                )}
+                                {impulse.location_lat && impulse.location_lng && (
+                                  <div className="flex items-center gap-1 text-[12px] text-white/50">
+                                    <MapPin size={10} />
+                                    <span className="whitespace-nowrap">{isRussian ? 'На карте' : 'On map'}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                          <p className="text-sm text-white/80 leading-relaxed mb-2">
-                            {impulse.content}
-                          </p>
-                          <div className="flex items-center gap-1 text-xs text-purple-400 mt-2">
-                            <Clock size={12} />
-                            <span>{formatDateTime(impulse.created_at)}</span>
-                          </div>
-                          {impulse.location_lat && impulse.location_lng && (
-                            <div className="mt-2 flex items-center gap-1 text-xs text-white/40">
-                              <MapPin size={12} />
-                              <span>{isRussian ? 'С геолокацией' : 'With location'}</span>
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
+                          </motion.div>
+                        );
+                      })}
                     </AnimatePresence>
                     
                     {/* Ячейка призыва к действию - всегда последняя, компактная */}
@@ -699,7 +738,7 @@ function App() {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: (eventsToShow.length) * 0.05 }}
-                        className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-2xl p-3 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
+                        className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-fuchsia-500/10 border border-indigo-500/20 rounded-xl p-2.5 backdrop-blur-md text-center cursor-pointer hover:from-indigo-500/20 hover:via-purple-500/20 hover:to-fuchsia-500/20 transition-all"
                         onClick={() => {
                           const category = categories[Math.floor(Math.random() * categories.length)];
                           handleCategoryClick(category.id);
@@ -712,13 +751,17 @@ function App() {
                           }
                         }}
                       >
-                        <div className="text-xl mb-1">✨</div>
-                        <p className="text-xs font-medium text-white/90 mb-0.5">
-                          {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
-                        </p>
-                        <p className="text-[10px] text-white/60">
-                          {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base flex-shrink-0">✨</span>
+                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                            <p className="text-sm font-bold text-white/90 leading-tight">
+                              {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
+                            </p>
+                            <p className="text-[12px] text-white/60 leading-tight">
+                              {isRussian ? 'Нажмите на категорию выше' : 'Tap a category above'}
+                            </p>
+                          </div>
+                        </div>
                       </motion.div>
                     )}
                   </div>
