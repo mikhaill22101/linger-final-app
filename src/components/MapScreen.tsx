@@ -4,6 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { GeoLocation, ImpulseLocation, MapInstance } from '../types/map';
 import { osmMapAdapter } from '../lib/osmMap';
+import { categoryEmojis } from '../lib/categoryColors';
 
 interface ImpulseRow {
   id: number;
@@ -754,7 +755,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </div>
       )}
 
-      {/* Кнопка "Назад" - всегда видна в левом верхнем углу */}
+      {/* Кнопка "Назад" - изящная Glassmorphism кнопка */}
       {status === 'ready' && !isSelectionMode && (
         <button
           onClick={() => {
@@ -770,51 +771,55 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               }
             }
           }}
-          className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center hover:bg-white/30 transition-all shadow-lg"
+          className="absolute top-4 left-4 z-[1001] w-10 h-10 rounded-full flex items-center justify-center hover:scale-110 transition-all"
           style={{
-            backdropFilter: 'blur(15px)',
-            WebkitBackdropFilter: 'blur(15px)',
+            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
           }}
         >
-          <ChevronLeft size={20} className="text-white" />
+          <ChevronLeft size={20} className="text-white/90" />
         </button>
       )}
 
-      {/* Компактное окно события - одна строка [Категория] | [Название] | [Дистанция] */}
+      {/* Минималистичное окно события - только суть: 🔥 Искра • 5 км */}
       <AnimatePresence>
         {selectedImpulse && status === 'ready' && !isSelectionMode && (
-          <div className="absolute bottom-0 left-0 right-0 p-2 z-[1000]">
+          <div className="absolute bottom-0 left-0 right-0 p-3 z-[1000]">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 50 }}
-              className="rounded-lg px-3 py-2 flex items-center gap-2"
+              onAnimationStart={() => {
+                // Haptic feedback при появлении карточки
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                  try {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                  } catch (e) {
+                    console.warn('[MapScreen] Haptic error:', e);
+                  }
+                }
+              }}
+              className="rounded-xl px-4 py-2.5 flex items-center gap-2"
               style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(15px)',
-                WebkitBackdropFilter: 'blur(15px)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
               }}
             >
-              {/* Категория */}
-              <span className="text-[10px] font-semibold text-purple-400 px-1.5 py-0.5 bg-purple-400/10 rounded-full flex-shrink-0">
+              {/* Эмодзи категории + Название категории + Дистанция */}
+              <span className="text-sm">
+                {categoryEmojis[selectedImpulse.category] || '🔥'}
+              </span>
+              <span className="text-xs font-medium text-white/90 flex-shrink-0">
                 {selectedImpulse.category}
               </span>
-              
-              {/* Разделитель */}
-              <span className="text-white/20">|</span>
-              
-              {/* Название (сокращенное) */}
-              <p className="text-xs text-white/90 leading-tight flex-1 min-w-0 line-clamp-1">
-                {selectedImpulse.content}
-              </p>
-              
-              {/* Разделитель */}
               {userLocation && selectedImpulse.location_lat && selectedImpulse.location_lng && (
                 <>
-                  <span className="text-white/20">|</span>
-                  {/* Дистанция */}
-                  <span className="text-[10px] text-white/60 flex-shrink-0">
+                  <span className="text-white/30">•</span>
+                  <span className="text-xs text-white/70 flex-shrink-0">
                     {formatDistance(calculateDistance(
                       userLocation.lat,
                       userLocation.lng,

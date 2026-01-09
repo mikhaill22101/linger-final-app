@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, MessageCircle, UserPlus, UserMinus } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { motion, AnimatePresence } from 'framer-motion';
 import Profile from './components/Profile';
@@ -128,9 +128,6 @@ function App() {
   const [eventDate, setEventDate] = useState<string>('');
   const [eventTime, setEventTime] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [selectedMapEvent, setSelectedMapEvent] = useState<any>(null); // Для скрытия таб-бара
-  const [selectedUserProfile, setSelectedUserProfile] = useState<{ id: number; name?: string; avatar?: string; username?: string } | null>(null); // Мини-карточка профиля
-  const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы для выбранного пользователя
   const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0); // Количество непрочитанных сообщений
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
@@ -157,10 +154,12 @@ function App() {
     return `${km.toFixed(1)} км`;
   };
 
+  // Инициализация Telegram WebApp и первоначенная загрузка данных
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     try {
-    WebApp.ready();
-    WebApp.expand();
+      WebApp.ready();
+      WebApp.expand();
       
       // Получаем геопозицию пользователя
       (async () => {
@@ -247,7 +246,7 @@ function App() {
       }
 
       // Загружаем имена авторов и аватары отдельно
-      const creatorIds = [...new Set(data.map((item: any) => item.creator_id))];
+      const creatorIds = [...new Set(data.map((item) => item.creator_id))];
       let profilesMap = new Map<number, { name: string; avatar?: string }>();
 
       if (creatorIds.length > 0) {
@@ -271,7 +270,7 @@ function App() {
       }
 
       // Обрабатываем данные с именами авторов и расстоянием
-      let processedFeed = data.map((item: any) => {
+      let processedFeed = data.map((item) => {
         let distance = Infinity;
         if (userLocation && item.location_lat && item.location_lng) {
           distance = calculateDistance(
@@ -757,40 +756,7 @@ function App() {
                             
                             {/* Слева: Аватар + Имя (кликабельно) */}
                             <div 
-                              className="flex items-center gap-3 flex-shrink-0 cursor-pointer"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (impulse.creator_id) {
-                                  setSelectedUserProfile({
-                                    id: impulse.creator_id,
-                                    name: impulse.author_name,
-                                    avatar: impulse.author_avatar,
-                                  });
-                                  
-                                  // Проверяем статус дружбы
-                                  const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
-                                  if (currentUserId && isSupabaseConfigured) {
-                                    try {
-                                      const { data } = await supabase
-                                        .from('friendships')
-                                        .select('id')
-                                        .or(`and(user_id.eq.${currentUserId},friend_id.eq.${impulse.creator_id}),and(user_id.eq.${impulse.creator_id},friend_id.eq.${currentUserId})`)
-                                        .single();
-                                      setIsFriend(!!data);
-                                    } catch (e) {
-                                      setIsFriend(false);
-                                    }
-                                  }
-                                  
-                                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                                    try {
-                                      window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                                    } catch (e) {
-                                      console.warn('Haptic error:', e);
-                                    }
-                                  }
-                                }
-                              }}
+                              className="flex items-center gap-3 flex-shrink-0"
                             >
                               <div className="relative">
                                 {impulse.author_avatar ? (
@@ -886,10 +852,8 @@ function App() {
             activeCategory={activeCategory} 
             onCategoryChange={setActiveCategory}
             refreshTrigger={mapRefreshTrigger}
-            onEventSelected={setSelectedMapEvent}
             onBack={() => {
               setActiveTab('home');
-              setSelectedMapEvent(null);
             }}
           />
         )}
@@ -1207,7 +1171,7 @@ function App() {
           </button>
           <button
             onClick={() => handleTabChange('profile')}
-            className={`flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
+            className={`relative flex flex-col items-center justify-center gap-1 flex-1 h-full transition-colors ${
               activeTab === 'profile' ? 'text-white' : 'text-white/50'
             }`}
           >
@@ -1215,6 +1179,11 @@ function App() {
             <span className="text-xs font-light">
               {isRussian ? 'Профиль' : 'Profile'}
             </span>
+            {unreadMessagesCount > 0 && (
+              <span className="absolute -top-1 right-6 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-[10px] font-semibold flex items-center justify-center">
+                {unreadMessagesCount > 9 ? '9+' : unreadMessagesCount}
+              </span>
+            )}
           </button>
         </div>
       </nav>

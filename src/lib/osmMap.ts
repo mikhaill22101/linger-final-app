@@ -4,10 +4,11 @@ import { categoryColors } from './categoryColors';
 
 // Leaflet CSS подключен в src/index.css
 
-// Функция создания иконки маркера
+// Функция создания иконки маркера (маленькие светящиеся точки)
 function createMarkerIcon(color: string, isActive: boolean, size: number = 20): DivIcon {
-  const baseSize = size;
-  const shadowSize = isActive ? 20 : 10;
+  // Маленькие маркеры по умолчанию, крупные только при клике
+  const baseSize = isActive ? size : 8; // 8px для обычных, 20px для активных
+  const shadowSize = isActive ? 20 : 6;
   const activeClass = isActive ? 'marker-active active-glow' : '';
   
   return L.divIcon({
@@ -17,12 +18,13 @@ function createMarkerIcon(color: string, isActive: boolean, size: number = 20): 
         width: ${baseSize}px;
         height: ${baseSize}px;
         background-color: ${color};
-        border: 2px solid white;
+        border: ${isActive ? '2px solid white' : '1px solid rgba(255, 255, 255, 0.5)'};
         border-radius: 50%;
         box-shadow: 0 0 ${shadowSize}px ${color}, 0 0 ${shadowSize * 1.5}px ${color};
         transition: all 0.3s ease;
         position: relative;
         color: ${color};
+        cursor: pointer;
       "></div>
     `,
     iconSize: [baseSize, baseSize],
@@ -32,17 +34,38 @@ function createMarkerIcon(color: string, isActive: boolean, size: number = 20): 
 
 export const osmMapAdapter: MapAdapter = {
   async initMap(container: HTMLDivElement, center: GeoLocation, zoom: number = 14): Promise<MapInstance> {
-    // Создаем карту
+    // Создаем карту без кнопок масштаба (только жесты)
     const map: LeafletMap = L.map(container, {
       center: [center.lat, center.lng],
       zoom: zoom,
-      zoomControl: true,
+      zoomControl: false, // Убираем кнопки масштаба
+      doubleClickZoom: true, // Двойной клик для зума
+      scrollWheelZoom: true, // Колесико мыши для зума
+      touchZoom: true, // Жесты для зума на мобильных
     });
 
-    // Добавляем тайлы OpenStreetMap
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    // Haptic feedback при перемещении карты
+    let moveTimeout: NodeJS.Timeout | null = null;
+    map.on('moveend', () => {
+      if (moveTimeout) {
+        clearTimeout(moveTimeout);
+      }
+      moveTimeout = setTimeout(() => {
+        if (window.Telegram?.WebApp?.HapticFeedback) {
+          try {
+            window.Telegram.WebApp.HapticFeedback.selectionChanged();
+          } catch (e) {
+            // Игнорируем ошибки haptic feedback
+          }
+        }
+      }, 300); // Небольшая задержка, чтобы не спамить
+    });
+
+    // Добавляем темные тайлы OpenStreetMap (CartoDB Dark Matter)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 19,
+      subdomains: 'abcd',
     }).addTo(map);
 
     let markers: LeafletMarker[] = [];
