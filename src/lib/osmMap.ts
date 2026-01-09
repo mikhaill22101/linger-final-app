@@ -135,11 +135,21 @@ export const osmMapAdapter: MapAdapter = {
     let selectionMarker: LeafletMarker | null = null;
     let locationSelectCallback: ((location: GeoLocation) => void) | null = null;
     let isSelectionMode = false;
+    let userLocationMarker: LeafletMarker | null = null; // Маркер локации пользователя
+    let currentUserLocation: GeoLocation | null = null; // Текущая локация пользователя
 
     const instance: MapInstance = {
       destroy() {
         markers.forEach((m) => m.remove());
         markers = [];
+        if (userLocationMarker) {
+          userLocationMarker.remove();
+          userLocationMarker = null;
+        }
+        if (selectionMarker) {
+          selectionMarker.remove();
+          selectionMarker = null;
+        }
         map.remove();
       },
       setMarkers(impulses: ImpulseLocation[], onClick, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) {
@@ -251,6 +261,56 @@ export const osmMapAdapter: MapAdapter = {
       invalidateSize() {
         // Принудительный пересчет размеров карты Leaflet
         map.invalidateSize();
+      },
+      setUserLocation(location: GeoLocation | null) {
+        currentUserLocation = location;
+        
+        // Удаляем старый маркер локации пользователя
+        if (userLocationMarker) {
+          userLocationMarker.remove();
+          userLocationMarker = null;
+        }
+        
+        // Если локация есть, создаем яркую синюю булавку
+        if (location) {
+          const userLocationIcon = L.divIcon({
+            className: 'user-location-marker',
+            html: `
+              <div style="
+                width: 20px;
+                height: 20px;
+                background: #3b82f6;
+                border: 3px solid white;
+                border-radius: 50%;
+                box-shadow: 
+                  0 0 0 4px rgba(59, 130, 246, 0.3),
+                  0 0 0 8px rgba(59, 130, 246, 0.2),
+                  0 4px 12px rgba(59, 130, 246, 0.6);
+                animation: userLocationPulse 2s ease-in-out infinite;
+                position: relative;
+              ">
+                <div style="
+                  position: absolute;
+                  top: 50%;
+                  left: 50%;
+                  transform: translate(-50%, -50%);
+                  width: 8px;
+                  height: 8px;
+                  background: white;
+                  border-radius: 50%;
+                "></div>
+              </div>
+            `,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          });
+          
+          userLocationMarker = L.marker([location.lat, location.lng], { 
+            icon: userLocationIcon,
+            interactive: false, // Не интерактивный маркер
+            zIndexOffset: 1000, // Всегда сверху
+          }).addTo(map);
+        }
       },
       setLocationSelectMode(enabled: boolean, onSelect: (location: GeoLocation) => void) {
         isSelectionMode = enabled;

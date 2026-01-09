@@ -132,13 +132,35 @@ body {
   height: 100% !important;
   width: 100% !important;
   /* Zenly Style: максимально сочные и яркие цвета, трава салатовая, вода бирюзовая */
-  filter: saturate(1.6) brightness(1.1) contrast(1.05);
+  filter: saturate(1.5) contrast(1.1) brightness(1.05);
 }
 
 /* Стилизация элементов карты в стиле Zenly */
 .map-container .leaflet-container .leaflet-tile-container img {
-  /* Усиливаем яркость травы и воды через CSS */
-  filter: saturate(1.3) brightness(1.05);
+  /* Усиливаем яркость травы и воды через CSS для Zenly-стиля */
+  filter: saturate(1.4) brightness(1.05) contrast(1.05);
+}
+
+/* Анимация пульсации для локации пользователя */
+@keyframes userLocationPulse {
+  0%, 100% {
+    box-shadow: 
+      0 0 0 4px rgba(59, 130, 246, 0.3),
+      0 0 0 8px rgba(59, 130, 246, 0.2),
+      0 4px 12px rgba(59, 130, 246, 0.6);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 
+      0 0 0 8px rgba(59, 130, 246, 0.4),
+      0 0 0 16px rgba(59, 130, 246, 0.2),
+      0 4px 16px rgba(59, 130, 246, 0.8);
+    transform: scale(1.1);
+  }
+}
+
+.user-location-marker {
+  animation: userLocationPulse 2s ease-in-out infinite;
 }
 
 /* Полностью скрываем кнопки масштаба карты */

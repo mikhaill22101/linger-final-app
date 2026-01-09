@@ -15,12 +15,15 @@ export interface ImpulseLocation {
   location_lng: number;
   created_at?: string;
   address?: string;
+  event_date?: string | null;
+  event_time?: string | null;
 }
 
 export interface MapInstance {
   destroy: () => void;
   setMarkers: (impulses: ImpulseLocation[], onClick: (impulse: ImpulseLocation) => void, activeCategory?: string | null, nearestEventId?: number, onLongPress?: (impulse: ImpulseLocation) => void) => void;
   setActiveCategory?: (category: string | null) => void;
+  setUserLocation?: (location: GeoLocation | null) => void; // Установка локации пользователя
   flyTo: (location: GeoLocation, zoom?: number, duration?: number) => void;
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
   invalidateSize?: () => void;

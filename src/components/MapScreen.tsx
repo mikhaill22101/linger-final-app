@@ -14,6 +14,8 @@ interface ImpulseRow {
   created_at: string;
   location_lat: number | null;
   location_lng: number | null;
+  event_date?: string | null;
+  event_time?: string | null;
 }
 
 type MapStatus = 'loading' | 'ready' | 'error';
@@ -82,20 +84,52 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   return R * c; // Расстояние в километрах
 }
 
-// Функция форматирования времени
-function formatTime(dateString: string): string {
+// Форматирование относительного времени ("Опубликовано X назад")
+function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
-  if (minutes < 1) return 'только что';
-  if (minutes < 60) return `${minutes} мин назад`;
-  if (hours < 24) return `${hours} ч назад`;
-  if (days < 7) return `${days} дн назад`;
-  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  if (diffMins < 1) {
+    return isRussian ? 'Только что' : 'Just now';
+  } else if (diffMins < 60) {
+    return isRussian ? `${diffMins} мин назад` : `${diffMins} min ago`;
+  } else if (diffHours < 24) {
+    return isRussian ? `${diffHours} ч назад` : `${diffHours} h ago`;
+  } else if (diffDays < 7) {
+    return isRussian ? `${diffDays} дн назад` : `${diffDays} days ago`;
+  } else {
+    return isRussian 
+      ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+      : date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+  }
+}
+
+// Форматирование даты и времени начала события ("Начало: Дата в Время")
+function formatEventDateTime(eventDate?: string, eventTime?: string): string | null {
+  if (!eventDate || !eventTime) return null;
+  
+  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+  const date = new Date(eventDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const eventDateOnly = new Date(date);
+  eventDateOnly.setHours(0, 0, 0, 0);
+  
+  const isToday = eventDateOnly.getTime() === today.getTime();
+  
+  if (isToday) {
+    return isRussian ? `Начало: Сегодня в ${eventTime}` : `Start: Today at ${eventTime}`;
+  } else {
+    const dateStr = isRussian
+      ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+      : date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+    return isRussian ? `Начало: ${dateStr} в ${eventTime}` : `Start: ${dateStr} at ${eventTime}`;
+  }
 }
 
 // Функция форматирования расстояния
@@ -145,7 +179,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
     console.log('[loadImpulses] Запрос данных из Supabase (limit 50)...');
     const { data, error } = await supabase
       .from('impulses')
-      .select('id, content, category, creator_id, created_at, location_lat, location_lng')
+      .select('id, content, category, creator_id, created_at, location_lat, location_lng, event_date, event_time')
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -207,6 +241,8 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
       location_lng: row.location_lng as number,
       created_at: row.created_at,
       address: undefined,
+      event_date: row.event_date || undefined,
+      event_time: row.event_time || undefined,
     }));
 
     console.log(`[loadImpulses] Возвращаем ${impulses.length} импульсов (без адресов)`);
@@ -314,6 +350,11 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             // Инициализируем карту с большим zoom для эффекта полета
             const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, initialZoom);
             mapInstanceRef.current = map;
+            
+            // Добавляем яркую синюю булавку локации пользователя
+            if (mapInstanceRef.current.setUserLocation) {
+              mapInstanceRef.current.setUserLocation(currentUserLocation);
+            }
 
             // ПРИНУДИТЕЛЬНЫЙ Resize для Leaflet (сразу после создания)
             if (mapInstanceRef.current.invalidateSize) {
@@ -619,37 +660,42 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               const zoom = isDefaultLocation ? 13 : 15;
 
               if (mapRef.current) {
-                const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, zoom);
-                mapInstanceRef.current = map;
+            const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, zoom);
+            mapInstanceRef.current = map;
+            
+            // Добавляем яркую синюю булавку локации пользователя
+            if (mapInstanceRef.current.setUserLocation) {
+              mapInstanceRef.current.setUserLocation(currentUserLocation);
+            }
 
-                // Принудительный Resize
-                if (mapInstanceRef.current.invalidateSize) {
+            // Принудительный Resize
+            if (mapInstanceRef.current.invalidateSize) {
+              mapInstanceRef.current.invalidateSize();
+              setTimeout(() => {
+                if (mapInstanceRef.current?.invalidateSize) {
                   mapInstanceRef.current.invalidateSize();
-                  setTimeout(() => {
-                    if (mapInstanceRef.current?.invalidateSize) {
-                      mapInstanceRef.current.invalidateSize();
-                    }
-                  }, 100);
                 }
+              }, 100);
+            }
 
-                if (isDefaultLocation) {
-                  setTimeout(() => {
-                    map.flyTo(currentUserLocation, zoom);
-                  }, 200);
-                }
+            if (isDefaultLocation) {
+              setTimeout(() => {
+                map.flyTo(currentUserLocation, zoom);
+              }, 200);
+            }
 
                 const loadedImpulses = await loadImpulses();
                 setImpulses(loadedImpulses);
                 
                 // Обновляем близлежащие события и определяем ближайшее для анимации
                 let nearestEventIdForRetry: number | undefined;
-                if (userLocation) {
+                if (currentUserLocation) {
                   const eventsWithDistance = loadedImpulses
                     .map(impulse => ({
-            ...impulse,
+                      ...impulse,
                       distance: calculateDistance(
-                        userLocation.lat,
-                        userLocation.lng,
+                        currentUserLocation.lat,
+                        currentUserLocation.lng,
                         impulse.location_lat,
                         impulse.location_lng
                       ),
@@ -658,6 +704,11 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                     .slice(0, 3);
                   setNearbyEvents(eventsWithDistance);
                   nearestEventIdForRetry = eventsWithDistance.length > 0 ? eventsWithDistance[0].id : undefined;
+                  
+                  // Обновляем локацию пользователя на карте
+                  if (mapInstanceRef.current && mapInstanceRef.current.setUserLocation) {
+                    mapInstanceRef.current.setUserLocation(currentUserLocation);
+                  }
                 }
                 
                 if (loadedImpulses.length > 0) {
@@ -941,7 +992,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
       {/* Виджет близлежащих событий */}
       {!isSelectionMode && !selectedImpulse && status === 'ready' && nearbyEvents.length > 0 && (
         <div className="absolute bottom-4 left-0 right-0 z-[900] px-4">
-          <h3 className="text-xs text-white/70 mb-2 px-2">Ближайшие события</h3>
+          <h3 className="text-xs text-white/70 mb-2 px-2" style={{ background: 'transparent' }}>Ближайшие события</h3>
           <div className="bg-black/90 backdrop-blur-xl border border-white/20 rounded-2xl p-3">
             <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {nearbyEvents.map((event) => (
@@ -985,7 +1036,21 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                         <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
                         <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                       </svg>
-                      <span>{formatTime(event.created_at)}</span>
+                      <span>
+                        {(() => {
+                          const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                          return isRussian ? `Опубликовано ${formatRelativeTime(event.created_at)}` : `Published ${formatRelativeTime(event.created_at)}`;
+                        })()}
+                      </span>
+                    </div>
+                  )}
+                  {(event as any).event_date && (event as any).event_time && (
+                    <div className="flex items-center gap-1 text-[10px] text-white/60 mt-1">
+                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                        <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                        <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                      </svg>
+                      <span>{formatEventDateTime((event as any).event_date, (event as any).event_time)}</span>
                     </div>
                   )}
                 </motion.div>
@@ -1059,11 +1124,12 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               className="rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-white/10 transition-all active:scale-95"
               style={{
                 height: '65px',
-                backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                backgroundColor: 'rgba(255, 255, 255, 0.6)', // 60% прозрачность
                 backdropFilter: 'blur(20px)',
                 WebkitBackdropFilter: 'blur(20px)',
                 border: '1px solid rgba(255, 255, 255, 0.2)',
                 boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.15)',
+                opacity: 0.6, // 60% прозрачность для всего окна
               }}
             >
               {/* Все данные в одну строку: Интеллектуальная иконка + Название категории + Дистанция */}
@@ -1159,15 +1225,31 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 </div>
               )}
 
-              {/* Дата и время */}
+              {/* Опубликовано X назад */}
               {selectedImpulse.created_at && (
+                <div className="mb-3 flex items-center gap-2">
+                  <svg width="16" height="16" viewBox="0 0 12 12" fill="none" className="text-white/60">
+                    <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                    <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                  <p className="text-sm text-white/70">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? `Опубликовано ${formatRelativeTime(selectedImpulse.created_at)}` : `Published ${formatRelativeTime(selectedImpulse.created_at)}`;
+                    })()}
+                  </p>
+                </div>
+              )}
+
+              {/* Начало: Дата в Время */}
+              {(selectedImpulse as any).event_date && (selectedImpulse as any).event_time && (
                 <div className="mb-4 flex items-center gap-2">
                   <svg width="16" height="16" viewBox="0 0 12 12" fill="none" className="text-white/60">
                     <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
                     <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                   </svg>
                   <p className="text-sm text-white/70">
-                    {formatTime(selectedImpulse.created_at)}
+                    {formatEventDateTime((selectedImpulse as any).event_date, (selectedImpulse as any).event_time)}
                   </p>
                 </div>
               )}

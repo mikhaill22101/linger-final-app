@@ -3,6 +3,8 @@ import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
+import { getSmartIcon } from '../lib/smartIcon';
+import { notifyFriendAdded } from '../lib/notifications';
 
 interface TelegramUser {
   id?: number;
@@ -50,7 +52,16 @@ const Profile: React.FC = () => {
   const [newMessage, setNewMessage] = useState('');
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [chuniRating, setChuniRating] = useState<number>(0); // Рейтинг Чуни
-  const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string }>>([]);
+  const [friends, setFriends] = useState<Array<{ 
+    id: number; 
+    full_name?: string; 
+    avatar_url?: string; 
+    username?: string;
+    last_seen?: string | null;
+    location_lat?: number | null;
+    location_lng?: number | null;
+    current_event?: { id: number; category: string; icon?: string } | null;
+  }>>([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
   const [selectedDirectChat, setSelectedDirectChat] = useState<number | null>(null); // ID друга для личного чата
   const [directMessages, setDirectMessages] = useState<Array<{ id: number; sender_id: number; receiver_id: number; text: string; created_at: string; profiles?: { full_name?: string; avatar_url?: string } }>>([]);
@@ -59,11 +70,35 @@ const Profile: React.FC = () => {
   const directChatChannelRef = useRef<any>(null);
   const channelRef = useRef<any>(null);
   const [isSearchFriendsOpen, setIsSearchFriendsOpen] = useState(false);
+  const [isFriendsModalOpen, setIsFriendsModalOpen] = useState(false); // Модальное окно списка друзей
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]);
+  const [globalSearchResults, setGlobalSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]); // Результаты глобального поиска
   const [isSearching, setIsSearching] = useState(false);
 
   // Загрузка профиля из базы данных
+  // Обновление last_seen при активности пользователя
+  useEffect(() => {
+    if (profile.telegramId && isSupabaseConfigured) {
+      const updateLastSeen = async () => {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ last_seen: new Date().toISOString() })
+            .eq('id', profile.telegramId);
+        } catch (err) {
+          console.warn('Failed to update last_seen:', err);
+        }
+      };
+      
+      // Обновляем при монтировании и каждые 2 минуты
+      updateLastSeen();
+      const interval = setInterval(updateLastSeen, 2 * 60 * 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [profile.telegramId, isSupabaseConfigured]);
+
   useEffect(() => {
     const loadProfile = async () => {
       if (typeof window === 'undefined') return;
@@ -158,54 +193,131 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Форматирование даты и времени для событий
-  const formatDateTime = (dateString: string) => {
+  // Форматирование относительного времени ("Опубликовано X назад")
+  const formatRelativeTime = (dateString: string): string => {
     const date = new Date(dateString);
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
     const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
-    if (eventDate.getTime() === today.getTime()) {
-      // Сегодня
-      return isRussian 
-        ? `Сегодня в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
-        : `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    if (diffMins < 1) {
+      return isRussian ? 'Только что' : 'Just now';
+    } else if (diffMins < 60) {
+      return isRussian ? `${diffMins} мин назад` : `${diffMins} min ago`;
+    } else if (diffHours < 24) {
+      return isRussian ? `${diffHours} ч назад` : `${diffHours} h ago`;
+    } else if (diffDays < 7) {
+      return isRussian ? `${diffDays} дн назад` : `${diffDays} days ago`;
     } else {
-      // Другая дата
-      return isRussian
-        ? `${date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
-        : `${date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+      return isRussian 
+        ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+        : date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
     }
   };
 
+  // Форматирование даты и времени начала события ("Начало: Дата в Время")
+  const formatEventDateTime = (eventDate?: string, eventTime?: string): string | null => {
+    if (!eventDate || !eventTime) return null;
+    
+    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+    const date = new Date(eventDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDateOnly = new Date(date);
+    eventDateOnly.setHours(0, 0, 0, 0);
+    
+    const isToday = eventDateOnly.getTime() === today.getTime();
+    
+    if (isToday) {
+      return isRussian ? `Начало: Сегодня в ${eventTime}` : `Start: Today at ${eventTime}`;
+    } else {
+      const dateStr = isRussian
+        ? date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+        : date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+      return isRussian ? `Начало: ${dateStr} в ${eventTime}` : `Start: ${dateStr} at ${eventTime}`;
+    }
+  };
+
+  // Функция расчета расстояния между двумя точками (Haversine formula)
+  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371; // Радиус Земли в километрах
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  // Загрузка ближайших событий (вместо "Мои записи")
   useEffect(() => {
-    const loadMyImpulses = async () => {
+    const loadNearestImpulses = async () => {
       if (!profile.telegramId) return;
 
       if (!isSupabaseConfigured) {
-        console.warn('⚠️ Supabase не настроен, пропускаем загрузку моих импульсов');
+        console.warn('⚠️ Supabase не настроен, пропускаем загрузку ближайших событий');
         setIsLoadingImpulses(false);
         return;
       }
 
       try {
         setIsLoadingImpulses(true);
+        
+        // Получаем геолокацию пользователя
+        let userLat: number | null = null;
+        let userLng: number | null = null;
+        
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+          });
+          userLat = position.coords.latitude;
+          userLng = position.coords.longitude;
+        } catch (err) {
+          console.warn('⚠️ Геолокация недоступна для загрузки ближайших событий');
+        }
+
+        // Загружаем все события с координатами
         const { data, error } = await supabase
           .from('impulses')
-          .select('id, content, category, created_at, location_lat, location_lng')
-          .eq('creator_id', profile.telegramId)
-          .order('created_at', { ascending: false });
+          .select('id, content, category, created_at, location_lat, location_lng, event_date, event_time')
+          .not('location_lat', 'is', null)
+          .not('location_lng', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(50);
 
         if (error) {
-          console.error('❌ Error loading my impulses from Supabase:', error);
-          console.error('  Code:', error.code);
-          console.error('  Message:', error.message);
+          console.error('❌ Error loading impulses from Supabase:', error);
           setMyImpulses([]);
-        } else {
-          // Загружаем адреса для событий с координатами (асинхронно, не блокируя отображение)
+        } else if (data) {
+          // Вычисляем расстояния и сортируем
+          let impulsesWithDistance = (data || []).map((impulse) => {
+            let distance: number | undefined = undefined;
+            if (userLat !== null && userLng !== null && impulse.location_lat && impulse.location_lng) {
+              distance = calculateDistance(userLat, userLng, impulse.location_lat, impulse.location_lng);
+            }
+            return { ...impulse, distance };
+          });
+
+          // Сортируем по расстоянию (ближайшие первые)
+          impulsesWithDistance.sort((a, b) => {
+            if (a.distance === undefined && b.distance === undefined) return 0;
+            if (a.distance === undefined) return 1;
+            if (b.distance === undefined) return -1;
+            return a.distance - b.distance;
+          });
+
+          // Берем только ближайшие (например, первые 10)
+          impulsesWithDistance = impulsesWithDistance.slice(0, 10);
+
+          // Загружаем адреса для событий
           const impulsesWithAddresses = await Promise.all(
-            (data || []).map(async (impulse) => {
+            impulsesWithDistance.map(async (impulse) => {
               if (impulse.location_lat && impulse.location_lng) {
                 try {
                   const address = await getAddress(impulse.location_lat, impulse.location_lng);
@@ -218,18 +330,27 @@ const Profile: React.FC = () => {
               return impulse;
             })
           );
+          
           setMyImpulses(impulsesWithAddresses);
-          // Рейтинг Чуни = количество созданных событий
-          setChuniRating(impulsesWithAddresses.length);
+        } else {
+          setMyImpulses([]);
         }
+
+        // Рейтинг Чуни = количество созданных пользователем событий (отдельный запрос)
+        const { data: myEventsData } = await supabase
+          .from('impulses')
+          .select('id')
+          .eq('creator_id', profile.telegramId);
+        setChuniRating(myEventsData?.length || 0);
       } catch (err) {
-        console.error('Failed to load my impulses:', err);
+        console.error('Failed to load nearest impulses:', err);
+        setMyImpulses([]);
       } finally {
         setIsLoadingImpulses(false);
       }
     };
 
-    loadMyImpulses();
+    loadNearestImpulses();
   }, [profile.telegramId]);
 
   // Загрузка списка друзей
@@ -252,8 +373,8 @@ const Profile: React.FC = () => {
             id,
             user_id,
             friend_id,
-            profiles_user:user_id (id, full_name, avatar_url, username),
-            profiles_friend:friend_id (id, full_name, avatar_url, username)
+            profiles_user:user_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng),
+            profiles_friend:friend_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng)
           `)
           .or(`user_id.eq.${profile.telegramId},friend_id.eq.${profile.telegramId}`);
 
@@ -266,13 +387,75 @@ const Profile: React.FC = () => {
             const friendProfile = friendship.user_id === profile.telegramId 
               ? friendship.profiles_friend 
               : friendship.profiles_user;
+            
+            const friendId = friendProfile?.id || (friendship.user_id === profile.telegramId ? friendship.friend_id : friendship.user_id);
+            
             return {
-              id: friendProfile?.id || (friendship.user_id === profile.telegramId ? friendship.friend_id : friendship.user_id),
+              id: friendId,
               full_name: friendProfile?.full_name,
               avatar_url: friendProfile?.avatar_url,
               username: friendProfile?.username,
+              last_seen: friendProfile?.last_seen || null,
+              location_lat: friendProfile?.location_lat || null,
+              location_lng: friendProfile?.location_lng || null,
+              current_event: null, // Будет заполнено при проверке событий
             };
           }).filter((f: any) => f.id); // Убираем пустые записи
+          
+          // Проверяем, находятся ли друзья на событиях
+          if (friendsList.length > 0) {
+            try {
+              const { data: events } = await supabase
+                .from('impulses')
+                .select('id, category, location_lat, location_lng, content')
+                .not('location_lat', 'is', null)
+                .not('location_lng', 'is', null);
+              
+              if (events && events.length > 0) {
+                // Функция расчета расстояния (Haversine)
+                const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+                  const R = 6371; // Радиус Земли в км
+                  const dLat = (lat2 - lat1) * Math.PI / 180;
+                  const dLng = (lng2 - lng1) * Math.PI / 180;
+                  const a = 
+                    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                  return R * c;
+                };
+                
+                // Проверяем каждого друга
+                friendsList.forEach((friend) => {
+                  if (friend.location_lat && friend.location_lng) {
+                    // Ищем ближайшее событие в радиусе 50 метров
+                    const nearestEvent = events.find((event: any) => {
+                      const distance = calculateDistance(
+                        friend.location_lat!,
+                        friend.location_lng!,
+                        event.location_lat,
+                        event.location_lng
+                      );
+                      return distance < 0.05; // 50 метров = 0.05 км
+                    });
+                    
+                    if (nearestEvent) {
+                      // Получаем иконку события на основе категории и текста
+                      const iconData = getSmartIcon(nearestEvent.content || nearestEvent.category);
+                      friend.current_event = {
+                        id: nearestEvent.id,
+                        category: nearestEvent.category,
+                        icon: iconData.icon,
+                      };
+                    }
+                  }
+                });
+              }
+            } catch (err) {
+              console.warn('Failed to check friend events:', err);
+            }
+          }
+          
           setFriends(friendsList);
         }
       } catch (err) {
@@ -383,10 +566,10 @@ const Profile: React.FC = () => {
       // Сохраняем данные в Supabase методом upsert
       // id должен быть bigint из Telegram user.id
       const updateData: any = {
-        id: profile.telegramId, // bigint из Telegram user.id
-        full_name: profile.firstName,
-        bio: profile.bio,
-        updated_at: new Date().toISOString(),
+          id: profile.telegramId, // bigint из Telegram user.id
+          full_name: profile.firstName,
+          bio: profile.bio,
+          updated_at: new Date().toISOString(),
       };
 
       if (profile.photoUrl) {
@@ -737,22 +920,21 @@ const Profile: React.FC = () => {
     }
   };
 
-  // Поиск друзей
-  const searchFriends = async (query: string) => {
+  // Глобальный поиск пользователей (для раздела "Найти новых знакомых")
+  const searchFriendsGlobal = async (query: string) => {
     if (!query.trim() || !profile.telegramId) {
-      setSearchResults([]);
+      setGlobalSearchResults([]);
       return;
     }
 
     if (!isSupabaseConfigured) {
-      WebApp.showAlert('Ошибка: База данных не настроена');
       return;
     }
 
     try {
       setIsSearching(true);
       
-      // Ищем пользователей по имени или username
+      // Ищем пользователей по имени или username (глобальный поиск)
       const { data, error } = await supabase
         .from('profiles')
         .select('id, full_name, avatar_url, username')
@@ -761,8 +943,8 @@ const Profile: React.FC = () => {
         .limit(20);
 
       if (error) {
-        console.error('❌ Error searching friends:', error);
-        setSearchResults([]);
+        console.error('❌ Error searching friends globally:', error);
+        setGlobalSearchResults([]);
         return;
       }
 
@@ -776,13 +958,27 @@ const Profile: React.FC = () => {
         isFriend: friendIds.includes(user.id),
       }));
 
-      setSearchResults(resultsWithStatus);
+      setGlobalSearchResults(resultsWithStatus);
     } catch (err) {
-      console.error('Failed to search friends:', err);
-      setSearchResults([]);
+      console.error('Failed to search friends globally:', err);
+      setGlobalSearchResults([]);
     } finally {
       setIsSearching(false);
     }
+  };
+
+  // Поиск среди текущих друзей (локальный поиск)
+  const searchFriendsLocal = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    
+    const friendMatches = friends.filter(friend => 
+      (friend.full_name?.toLowerCase().includes(query.toLowerCase()) || 
+       friend.username?.toLowerCase().includes(query.toLowerCase()))
+    );
+    setSearchResults(friendMatches.map(f => ({ ...f, isFriend: true })));
   };
 
   // Добавление/удаление друга
@@ -850,7 +1046,18 @@ const Profile: React.FC = () => {
               full_name: friendProfile.full_name,
               avatar_url: friendProfile.avatar_url,
               username: friendProfile.username,
+              last_seen: null,
+              location_lat: null,
+              location_lng: null,
+              current_event: null,
             }]);
+            
+            // Отправляем уведомление новому другу
+            try {
+              await notifyFriendAdded(friendId, profile.firstName || 'Кто-то');
+            } catch (err) {
+              console.warn('Failed to send friend notification:', err);
+            }
           }
           
           if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -1113,7 +1320,7 @@ const Profile: React.FC = () => {
                     </svg>
                   )}
                 </button>
-              </div>
+                </div>
               {/* Скрытый input для выбора файла */}
               <input
                 ref={fileInputRef}
@@ -1190,11 +1397,31 @@ const Profile: React.FC = () => {
                     return isRussian ? 'Друзья' : 'Friends';
                   })()}
                 </p>
-                {friends.length > 0 && (
-                  <span className="text-[10px] text-white/40">
-                    {friends.length}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {friends.length > 0 && (
+                    <span className="text-[10px] text-white/40">
+                      {friends.length}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => {
+                      setIsFriendsModalOpen(true);
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Все →' : 'All →';
+                    })()}
+                  </button>
+                </div>
               </div>
 
               {isLoadingFriends ? (
@@ -1243,6 +1470,44 @@ const Profile: React.FC = () => {
                             {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
                           </div>
                         )}
+                        
+                        {/* Индикатор онлайна или события */}
+                        {(() => {
+                          // Проверка, находится ли друг на событии
+                          if (friend.current_event) {
+                            return (
+                              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white border-2 border-black flex items-center justify-center text-xs">
+                                {friend.current_event.icon || '📍'}
+                              </div>
+                            );
+                          }
+                          
+                          // Проверка онлайна (last_seen менее 5 минут назад)
+                          if (friend.last_seen) {
+                            const lastSeenDate = new Date(friend.last_seen);
+                            const now = new Date();
+                            const diffMs = now.getTime() - lastSeenDate.getTime();
+                            const diffMins = Math.floor(diffMs / 60000);
+                            const isOnline = diffMins < 5;
+                            
+                            return (
+                              <div 
+                                className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-black ${
+                                  isOnline ? 'bg-green-500' : 'bg-gray-500'
+                                }`}
+                                title={isOnline ? 'Онлайн' : `Был(а) ${diffMins} мин назад`}
+                              />
+                            );
+                          }
+                          
+                          // Если нет данных о last_seen, показываем серый индикатор
+                          return (
+                            <div 
+                              className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-black bg-gray-500"
+                              title="Статус неизвестен"
+                            />
+                          );
+                        })()}
                       </div>
                       <span className="text-[10px] text-white/70 text-center max-w-[60px] truncate">
                         {friend.full_name || friend.username || 'Friend'}
@@ -1253,13 +1518,13 @@ const Profile: React.FC = () => {
               )}
             </div>
 
-            {/* Мои записи */}
+            {/* Ближайшие события */}
             <div className="mt-6 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium tracking-[0.2em] text-white/50 uppercase">
                   {(() => {
                     const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
-                    return isRussian ? 'Мои записи' : 'My Messages';
+                    return isRussian ? 'Ближайшие события' : 'Nearest Events';
                   })()}
                 </p>
                 {myImpulses.length > 0 && (
@@ -1311,59 +1576,54 @@ const Profile: React.FC = () => {
                             <span className="text-[10px] text-white/40 px-2 py-0.5 bg-white/5 rounded-full">
                               {impulse.category}
                             </span>
-                            <div className="flex items-center gap-1 text-[10px] text-white/30">
-                              <Clock size={10} />
-                              <span>{formatTime(impulse.created_at)}</span>
-                            </div>
-                          </div>
-                          <p className="text-xs text-white/70 leading-relaxed mb-1.5">
-                            <span className="font-semibold text-purple-400">{impulse.category}:</span> {impulse.content}
-                          </p>
-                          {/* Адрес и время в одну компактную строку */}
-                          <div className="flex items-center gap-2 text-[11px] text-[#888]">
-                            {impulse.address && (
-                              <span className="truncate">{impulse.address}</span>
-                            )}
-                            {impulse.event_date && impulse.event_time && (
-                              <span className="flex-shrink-0">
+                            {impulse.distance !== undefined && (
+                              <span className="text-[10px] text-white/40">
                                 {(() => {
                                   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
-                                  const eventDate = new Date(impulse.event_date);
-                                  const today = new Date();
-                                  const isToday = eventDate.toDateString() === today.toDateString();
-                                  
-                                  if (isToday) {
-                                    return isRussian ? `Сегодня ${impulse.event_time}` : `Today ${impulse.event_time}`;
-                                  } else {
-                                    return isRussian
-                                      ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${impulse.event_time}`
-                                      : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${impulse.event_time}`;
+                                  if (impulse.distance! < 1) {
+                                    return isRussian ? `${Math.round(impulse.distance! * 1000)} м` : `${Math.round(impulse.distance! * 1000)} m`;
                                   }
+                                  return isRussian ? `${impulse.distance!.toFixed(1)} км` : `${impulse.distance!.toFixed(1)} km`;
                                 })()}
                               </span>
                             )}
                           </div>
-                          {/* Старый блок адреса - удален */}
-                          {false && impulse.address && (
+                          <p className="text-xs text-white/70 leading-relaxed mb-1.5">
+                            <span className="font-semibold text-purple-400">{impulse.category}:</span> {impulse.content}
+                          </p>
+                          {/* Опубликовано X назад */}
+                          <div className="flex items-center gap-1 text-[10px] text-white/40 mb-1">
+                              <Clock size={10} />
+                            <span>
+                              {(() => {
+                                const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                                return isRussian ? `Опубликовано ${formatRelativeTime(impulse.created_at)}` : `Published ${formatRelativeTime(impulse.created_at)}`;
+                              })()}
+                            </span>
+                            </div>
+                          {/* Начало: Дата в Время */}
+                          {impulse.event_date && impulse.event_time && (
                             <div className="flex items-center gap-1 text-[10px] text-white/50 mb-1">
+                              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                                <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
+                                <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                              </svg>
+                              <span>{formatEventDateTime(impulse.event_date, impulse.event_time)}</span>
+                          </div>
+                          )}
+                          {/* Адрес */}
+                          {impulse.address && (
+                            <div className="flex items-center gap-1 text-[11px] text-[#888]">
                               <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
                                 <path d="M6 1C4.34 1 3 2.34 3 4c0 2.5 3 6 3 6s3-3.5 3-6c0-1.66-1.34-3-3-3z" stroke="currentColor" strokeWidth="1" fill="none"/>
                                 <circle cx="6" cy="4" r="1" fill="currentColor"/>
                               </svg>
-                              <span className="truncate">📍 {impulse.address}</span>
-                            </div>
+                              <span className="truncate">{impulse.address}</span>
+                        </div>
                           )}
-                          {/* Дата и время */}
-                          <div className="flex items-center gap-1 text-[10px] text-white/50">
-                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                              <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
-                              <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                            </svg>
-                            <span>📅 {formatDateTime(impulse.created_at)}</span>
-                          </div>
                         </div>
                         <div className="flex flex-col gap-2">
-                          <button
+                        <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedEventChat(impulse);
@@ -1392,14 +1652,14 @@ const Profile: React.FC = () => {
                                 }
                               }
                             }}
-                            disabled={deletingIds.has(impulse.id)}
-                            className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            <Trash2 
+                          disabled={deletingIds.has(impulse.id)}
+                          className="p-1.5 hover:bg-red-500/20 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 
                               size={12} 
-                              className="text-white/40 hover:text-red-400 transition-colors" 
-                            />
-                          </button>
+                            className="text-white/40 hover:text-red-400 transition-colors" 
+                          />
+                        </button>
                         </div>
                       </motion.div>
                     ))}
@@ -1461,14 +1721,24 @@ const Profile: React.FC = () => {
                   setDirectMessages([]);
                   setNewDirectMessage('');
                 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[2000]"
+                className="fixed inset-0 z-[2000]"
+                style={{
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
               />
               <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
                 onClick={(e) => e.stopPropagation()}
-                className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+                className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+                style={{
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
               >
                 <div className="flex items-center gap-3 mb-4">
                   {friend.avatar_url ? (
@@ -1480,7 +1750,7 @@ const Profile: React.FC = () => {
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
                       {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
-                    </div>
+    </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <h3 className="text-lg font-semibold text-white truncate">
@@ -1606,14 +1876,24 @@ const Profile: React.FC = () => {
                     setChatMessages([]);
                     setNewMessage('');
                   }}
-                  className="fixed inset-0 bg-black/95 backdrop-blur-sm z-[2000]"
+                  className="fixed inset-0 z-[2000]"
+                  style={{
+                    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                  }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
                 onClick={(e) => e.stopPropagation()}
-                className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+                className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+                style={{
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                }}
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex-1 min-w-0">
@@ -1634,7 +1914,7 @@ const Profile: React.FC = () => {
                         <circle cx="6" cy="6" r="5" stroke="currentColor" strokeWidth="1"/>
                         <path d="M6 3v3l2 1" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                       </svg>
-                      {formatDateTime(selectedEventChat.created_at)}
+                      {formatRelativeTime(selectedEventChat.created_at)}
                     </p>
                   </div>
                 <button
@@ -1752,7 +2032,12 @@ const Profile: React.FC = () => {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsSearchFriendsOpen(false)}
-              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+              className="fixed inset-0 z-[2000]"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1918,6 +2203,330 @@ const Profile: React.FC = () => {
                       const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
                       return isRussian ? 'Введите имя или username для поиска' : 'Enter name or username to search';
                     })()}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Модальное окно списка друзей с умным поиском */}
+      <AnimatePresence>
+        {isFriendsModalOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setIsFriendsModalOpen(false);
+                setSearchQuery('');
+                setSearchResults([]);
+                setGlobalSearchResults([]);
+              }}
+              className="fixed inset-0 z-[2000]"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 bottom-4 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Друзья' : 'Friends';
+                  })()}
+                </h3>
+                <button
+                  onClick={() => {
+                    setIsFriendsModalOpen(false);
+                    setSearchQuery('');
+                    setSearchResults([]);
+                    setGlobalSearchResults([]);
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={20} className="text-white/70" />
+                </button>
+              </div>
+
+              {/* Поле поиска */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    const query = e.target.value;
+                    setSearchQuery(query);
+                    // Умный поиск: сначала друзья, потом глобальный
+                    if (query.trim().length >= 2) {
+                      // Поиск среди друзей (локальный)
+                      searchFriendsLocal(query);
+                      
+                      // Глобальный поиск
+                      searchFriendsGlobal(query);
+                    } else {
+                      setSearchResults([]);
+                      setGlobalSearchResults([]);
+                    }
+                  }}
+                  placeholder={(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Поиск по имени или username...' : 'Search by name or username...';
+                  })()}
+                  className="w-full rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-10 py-3"
+                  autoFocus
+                />
+              </div>
+
+              {/* Результаты: сначала друзья, потом глобальный поиск */}
+              <div className="flex-1 overflow-y-auto space-y-4">
+                {/* Раздел: Совпадения из друзей */}
+                {searchQuery.trim().length >= 2 && searchResults.length > 0 && (
+                  <div>
+                    <p className="text-xs text-white/50 uppercase tracking-wider mb-2 px-1">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Друзья' : 'Friends';
+                      })()}
+                    </p>
+                    {searchResults.map((user) => (
+                      <motion.div
+                        key={user.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors mb-2"
+                      >
+                        <div className="relative">
+                          {user.avatar_url ? (
+                            <img
+                              src={user.avatar_url}
+                              alt={user.full_name || user.username || 'User'}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                              {(user.full_name || user.username || 'U')[0].toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {user.full_name || user.username || 'User'}
+                          </p>
+                          {user.username && user.full_name && (
+                            <p className="text-xs text-white/50 truncate">@{user.username}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectedDirectChat(user.id);
+                            loadDirectChat(user.id);
+                            setIsFriendsModalOpen(false);
+                            if (window.Telegram?.WebApp?.HapticFeedback) {
+                              try {
+                                window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                              } catch (e) {
+                                console.warn('Haptic error:', e);
+                              }
+                            }
+                          }}
+                          className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 text-white text-xs font-semibold hover:opacity-90 transition-opacity"
+                        >
+                          {(() => {
+                            const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                            return isRussian ? 'Написать' : 'Message';
+                          })()}
+                        </button>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Раздел: Найти новых знакомых */}
+                {searchQuery.trim().length >= 2 && (
+                  <div>
+                    <p className="text-xs text-white/50 uppercase tracking-wider mb-2 px-1">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Найти новых знакомых' : 'Find New Friends';
+                      })()}
+                    </p>
+                    {isSearching ? (
+                      <div className="text-center py-4 text-white/40 text-sm">
+                        {(() => {
+                          const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                          return isRussian ? 'Поиск...' : 'Searching...';
+                        })()}
+                      </div>
+                    ) : globalSearchResults.length > 0 ? (
+                      globalSearchResults.map((user) => (
+                        <motion.div
+                          key={user.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors mb-2"
+                        >
+                          <div className="relative">
+                            {user.avatar_url ? (
+                              <img
+                                src={user.avatar_url}
+                                alt={user.full_name || user.username || 'User'}
+                                className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                                {(user.full_name || user.username || 'U')[0].toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-white truncate">
+                              {user.full_name || user.username || 'User'}
+                            </p>
+                            {user.username && user.full_name && (
+                              <p className="text-xs text-white/50 truncate">@{user.username}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (!profile.telegramId) return;
+                              
+                              if (user.isFriend) {
+                                // Удалить друга
+                                const { error } = await supabase
+                                  .from('friendships')
+                                  .delete()
+                                  .or(`and(user_id.eq.${profile.telegramId},friend_id.eq.${user.id}),and(user_id.eq.${user.id},friend_id.eq.${profile.telegramId})`);
+                                
+                                if (!error) {
+                                  setFriends(friends.filter(f => f.id !== user.id));
+                                  setGlobalSearchResults(globalSearchResults.map(u => u.id === user.id ? { ...u, isFriend: false } : u));
+                                }
+                              } else {
+                                // Добавить друга
+                                const { error } = await supabase
+                                  .from('friendships')
+                                  .insert([{ user_id: profile.telegramId, friend_id: user.id }]);
+                                
+                                if (!error) {
+                                  setFriends([...friends, { id: user.id, full_name: user.full_name, avatar_url: user.avatar_url, username: user.username }]);
+                                  setGlobalSearchResults(globalSearchResults.map(u => u.id === user.id ? { ...u, isFriend: true } : u));
+                                }
+                              }
+                              
+                              if (window.Telegram?.WebApp?.HapticFeedback) {
+                                try {
+                                  window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                                } catch (e) {
+                                  console.warn('Haptic error:', e);
+                                }
+                              }
+                            }}
+                            className={`px-4 py-2 rounded-lg text-white text-xs font-semibold hover:opacity-90 transition-opacity ${
+                              user.isFriend 
+                                ? 'bg-red-500/20 border border-red-500/50 text-red-300'
+                                : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500'
+                            }`}
+                          >
+                            {user.isFriend ? (
+                              <>
+                                <UserMinus size={14} className="inline mr-1" />
+                                {(() => {
+                                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                                  return isRussian ? 'Удалить' : 'Remove';
+                                })()}
+                              </>
+                            ) : (
+                              <>
+                                <UserPlus size={14} className="inline mr-1" />
+                                {(() => {
+                                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                                  return isRussian ? 'Добавить' : 'Add';
+                                })()}
+                              </>
+                            )}
+                          </button>
+                        </motion.div>
+                      ))
+                    ) : searchQuery.trim().length >= 2 ? (
+                      <div className="text-center py-4 text-white/40 text-sm">
+                        {(() => {
+                          const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                          return isRussian ? 'Ничего не найдено' : 'No results found';
+                        })()}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Список всех друзей (если поиск пустой) */}
+                {!searchQuery.trim() && friends.length > 0 && (
+                  <div>
+                    <p className="text-xs text-white/50 uppercase tracking-wider mb-2 px-1">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Все друзья' : 'All Friends';
+                      })()}
+                    </p>
+                    {friends.map((friend) => (
+                      <motion.div
+                        key={friend.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors mb-2 cursor-pointer"
+                        onClick={() => {
+                          setSelectedDirectChat(friend.id);
+                          loadDirectChat(friend.id);
+                          setIsFriendsModalOpen(false);
+                          if (window.Telegram?.WebApp?.HapticFeedback) {
+                            try {
+                              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                            } catch (e) {
+                              console.warn('Haptic error:', e);
+                            }
+                          }
+                        }}
+                      >
+                        <div className="relative">
+                          {friend.avatar_url ? (
+                            <img
+                              src={friend.avatar_url}
+                              alt={friend.full_name || friend.username || 'Friend'}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                              {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {friend.full_name || friend.username || 'Friend'}
+                          </p>
+                          {friend.username && friend.full_name && (
+                            <p className="text-xs text-white/50 truncate">@{friend.username}</p>
+                          )}
+                        </div>
+                        <MessageCircle size={18} className="text-white/40" />
+                      </motion.div>
+                    ))}
                   </div>
                 )}
               </div>

@@ -8,6 +8,7 @@ import Profile from './components/Profile';
 import MapScreen from './components/MapScreen';
 import MapPicker from './components/MapPicker';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from './lib/supabase';
+import { notifyNearbyFriendEvent } from './lib/notifications';
 
 interface Impulse {
   id: number;
@@ -145,6 +146,7 @@ function App() {
   const [eventTime, setEventTime] = useState<string>('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0); // Количество непрочитанных сообщений
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0); // Количество непрочитанных уведомлений и запросов
   const [selectedUserProfile, setSelectedUserProfile] = useState<{ id: number; name?: string; avatar?: string; username?: string } | null>(null); // Выбранный профиль пользователя
   const [isFriend, setIsFriend] = useState<boolean>(false); // Статус дружбы с выбранным пользователем
   const [userAvatar, setUserAvatar] = useState<string | undefined>(undefined);
@@ -367,20 +369,35 @@ function App() {
     }
   }, [userLocation]);
 
-  // Загрузка количества непрочитанных сообщений
+  // Загрузка количества непрочитанных сообщений и уведомлений
   const loadUnreadMessagesCount = async () => {
     const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
     if (!currentUserId || !isSupabaseConfigured) return;
 
     try {
-      const { data, error } = await supabase
+      // Загружаем непрочитанные сообщения
+      const { data: messages, error: messagesError } = await supabase
         .from('direct_messages')
         .select('id', { count: 'exact' })
         .eq('receiver_id', currentUserId)
         .eq('read', false);
 
-      if (!error && data) {
-        setUnreadMessagesCount(data.length || 0);
+      if (!messagesError && messages) {
+        setUnreadMessagesCount(messages.length || 0);
+      }
+
+      // Загружаем непрочитанные запросы в друзья (новые дружбы, созданные за последние 24 часа, где текущий пользователь friend_id)
+      const { data: friendRequests, error: friendRequestsError } = await supabase
+        .from('friendships')
+        .select('id', { count: 'exact' })
+        .eq('friend_id', currentUserId)
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+      if (!friendRequestsError && friendRequests) {
+        const totalUnread = (messages?.length || 0) + (friendRequests.length || 0);
+        setUnreadNotificationsCount(totalUnread);
+      } else {
+        setUnreadNotificationsCount(messages?.length || 0);
       }
     } catch (err) {
       console.error('Failed to load unread messages count:', err);
@@ -770,6 +787,59 @@ function App() {
         }
         
         WebApp.showAlert(isRussian ? 'Событие успешно создано!' : 'Event created successfully!');
+        
+        // Отправляем уведомления друзьям в радиусе 5 км
+        if (locationData.location_lat && locationData.location_lng && userLocation) {
+          try {
+            // Загружаем друзей пользователя
+            const { data: friendships } = await supabase
+              .from('friendships')
+              .select('user_id, friend_id')
+              .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+            
+            if (friendships && friendships.length > 0) {
+              // Получаем ID друзей
+              const friendIds = friendships.map((f: any) => 
+                f.user_id === userId ? f.friend_id : f.user_id
+              ).filter((id: number) => id !== userId);
+              
+              // Загружаем координаты друзей
+              if (friendIds.length > 0) {
+                const { data: friendProfiles } = await supabase
+                  .from('profiles')
+                  .select('id, full_name, location_lat, location_lng')
+                  .in('id', friendIds)
+                  .not('location_lat', 'is', null)
+                  .not('location_lng', 'is', null);
+                
+                if (friendProfiles) {
+                  // Проверяем каждого друга на расстояние
+                  friendProfiles.forEach((friend: any) => {
+                    const distance = calculateDistance(
+                      locationData.location_lat!,
+                      locationData.location_lng!,
+                      friend.location_lat,
+                      friend.location_lng
+                    );
+                    
+                    // Если друг в радиусе 5 км, отправляем уведомление
+                    if (distance <= 5) {
+                      notifyNearbyFriendEvent(
+                        friend.id,
+                        userName || 'Кто-то',
+                        messageContent.trim(),
+                        distance
+                      ).catch(err => console.warn('Failed to send notification:', err));
+                    }
+                  });
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to send event notifications:', err);
+          }
+        }
+        
         handleCloseModal();
         loadFeed();
         // Обновляем карту
@@ -870,7 +940,7 @@ function App() {
                 WebkitBackdropFilter: 'blur(20px)',
               }}
             >
-              {/* Аватарка пользователя слева */}
+              {/* Аватарка пользователя слева с бейджем уведомлений */}
               <button
                 onClick={() => {
                   setActiveTab('profile');
@@ -882,7 +952,7 @@ function App() {
                     }
                   }
                 }}
-                className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/20 hover:border-white/40 transition-colors flex-shrink-0"
+                className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-white/20 hover:border-white/40 transition-colors flex-shrink-0"
               >
                 {userAvatar ? (
                   <img 
@@ -894,6 +964,15 @@ function App() {
                   <div className="w-full h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
                     {(userName || 'U')[0].toUpperCase()}
                   </div>
+                )}
+                
+                {/* Бейдж непрочитанных уведомлений */}
+                {unreadNotificationsCount > 0 && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 border-2 border-black flex items-center justify-center">
+                    <span className="text-[10px] font-bold text-white">
+                      {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                      </span>
+                    </div>
                 )}
               </button>
 
@@ -942,7 +1021,7 @@ function App() {
                 >
                   <PlusCircle size={22} className="text-white" />
                 </button>
-                    </div>
+                </div>
             </header>
 
             {/* Лента активности */}
@@ -952,82 +1031,51 @@ function App() {
                   {isRussian ? 'Загрузка...' : 'Loading...'}
                 </div>
               ) : (() => {
-                // Строгая логика количества ячеек:
-                // 0 событий → 0 карточек + 1 кнопка создания = 1 ячейка
-                // 1 событие → 1 карточка + 1 кнопка создания = 2 ячейки
-                // 2 события → 2 карточки + 1 кнопка создания = 3 ячейки
-                // 3+ событий → 3 карточки + 1 кнопка создания = 4 ячейки
-                const maxRealEvents = feed.length >= 3 ? 3 : feed.length;
-                const eventsToShow = feed.slice(0, maxRealEvents);
-                // Всегда показываем только одну кнопку создания в конце
-                const shouldShowCallToAction = true;
-                
-                // Если нет событий, показываем только одну кнопку создания
+                // Показываем только одно ближайшее событие в топе ленты
+                // Кнопку "Создать событие" убрали - теперь она только в header (+)
                 if (feed.length === 0) {
                   return (
-                    <div className="space-y-3">
-                      <motion.div
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
-                        onClick={() => {
-                          const category = categories[Math.floor(Math.random() * categories.length)];
-                          handleCategoryClick(category.id);
-                          if (window.Telegram?.WebApp?.HapticFeedback) {
-                            try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                            } catch (e) {
-                              console.warn('Haptic error:', e);
-                            }
-                          }
-                        }}
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <span className="text-xl flex-shrink-0">✨</span>
-                          <p className="text-sm font-bold text-white leading-tight flex-1">
-                            {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
-                          </p>
-                </div>
-                      </motion.div>
+                    <div className="text-center py-8 text-white/40 text-sm">
+                      {isRussian ? 'Пока нет ближайших событий' : 'No nearest events yet'}
                 </div>
                   );
                 }
 
+                // Показываем только самое ближайшее событие
+                const impulse = feed[0];
+                
+                // Форматируем дату события для компактного отображения
+                const eventDate = impulse.event_date ? new Date(impulse.event_date) : null;
+                const eventTime = impulse.event_time || '';
+                const dateTimeStr = eventDate 
+                  ? (() => {
+                      const now = new Date();
+                      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                      const eventDateOnly = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+                      
+                      if (eventDateOnly.getTime() === today.getTime()) {
+                        return isRussian 
+                          ? `Сегодня ${eventTime || ''}`.trim()
+                          : `Today ${eventTime || ''}`.trim();
+                      } else {
+                        return isRussian
+                          ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${eventTime || ''}`.trim()
+                          : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${eventTime || ''}`.trim();
+                      }
+                    })()
+                  : formatTime(impulse.created_at);
+
                 return (
                 <div className="space-y-3">
                   <AnimatePresence>
-                      {/* Реальные события */}
-                      {eventsToShow.map((impulse, index) => {
-                        // Форматируем дату события для компактного отображения
-                        const eventDate = impulse.event_date ? new Date(impulse.event_date) : null;
-                        const eventTime = impulse.event_time || '';
-                        const dateTimeStr = eventDate 
-                          ? (() => {
-                              const now = new Date();
-                              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                              const eventDateOnly = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-                              
-                              if (eventDateOnly.getTime() === today.getTime()) {
-                                return isRussian 
-                                  ? `Сегодня ${eventTime || ''}`.trim()
-                                  : `Today ${eventTime || ''}`.trim();
-                              } else {
-                                return isRussian
-                                  ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${eventTime || ''}`.trim()
-                                  : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${eventTime || ''}`.trim();
-                              }
-                            })()
-                          : formatTime(impulse.created_at);
-
-                        return (
+                    {/* Самое ближайшее событие */}
                       <motion.div
                         key={impulse.id}
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 20 }}
-                        transition={{ delay: index * 0.05 }}
-                            className="compact-event-card relative"
-                          >
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      className="compact-event-card relative"
+                    >
                             {/* Индикатор новизны для событий < 2 часов */}
                             {isNewEvent(impulse.created_at) && (
                               <motion.div
@@ -1109,42 +1157,7 @@ function App() {
                         )}
                             </div>
                       </motion.div>
-                        );
-                      })}
                   </AnimatePresence>
-                    
-                    {/* Ячейка призыва к действию - всегда последняя, компактная */}
-                    {shouldShowCallToAction && (
-                      <motion.div
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: (eventsToShow.length) * 0.05 }}
-                        className="compact-event-card cursor-pointer hover:bg-white/10 transition-all"
-                        onClick={async () => {
-                          // Загружаем шаблоны при открытии модального окна
-                          await loadEventTemplates();
-                          setModalOpen(true);
-                          setStep('category');
-                          setSelectedCategory(null);
-                          setSearchQuery('');
-                          setHighlightedCategory(null);
-                          if (window.Telegram?.WebApp?.HapticFeedback) {
-                            try {
-                              window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                            } catch (e) {
-                              console.warn('Haptic error:', e);
-                            }
-                          }
-                        }}
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <span className="text-xl flex-shrink-0">✨</span>
-                          <p className="text-sm font-bold text-white leading-tight flex-1">
-                            {isRussian ? 'Создайте свое событие!' : 'Create your event!'}
-                          </p>
-                </div>
-                      </motion.div>
-              )}
                 </div>
                 );
               })()}
@@ -1167,7 +1180,12 @@ function App() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     onClick={(e) => e.stopPropagation()}
-                    className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+                    className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+                    style={{
+                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                      backdropFilter: 'blur(20px)',
+                      WebkitBackdropFilter: 'blur(20px)',
+                    }}
                   >
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-xl font-light text-white">
@@ -1227,7 +1245,12 @@ function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={handleCloseModal}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+              className="fixed inset-0 z-50"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
             />
             <motion.div
               initial={{ opacity: 0, y: 100 }}
@@ -1235,7 +1258,12 @@ function App() {
               exit={{ opacity: 0, y: 100 }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               onClick={(e) => e.stopPropagation()}
-              className="fixed inset-x-0 bottom-0 bg-black/95 backdrop-blur-xl border-t border-white/20 rounded-t-3xl p-6 z-50 max-h-[85vh] overflow-y-auto"
+              className="fixed inset-x-0 bottom-0 border-t border-white/20 rounded-t-3xl p-6 z-50 max-h-[85vh] overflow-y-auto"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-light text-white">
@@ -1335,7 +1363,7 @@ function App() {
                   <div className="relative mb-4">
                     <input
                       type="text"
-                      value={messageContent}
+                value={messageContent}
                       onChange={(e) => {
                         setMessageContent(e.target.value);
                         setIsManualTitle(true); // Пользователь редактирует вручную
@@ -1346,8 +1374,8 @@ function App() {
                       className={`w-full rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35 px-4 py-3 pr-12 transition-all duration-300 ${
                         titleFlash ? 'bg-purple-500/20 border-purple-400/50 text-purple-200' : ''
                       }`}
-                      autoFocus
-                    />
+                autoFocus
+              />
                     {selectedCategory && eventTemplates.length > 0 && (
                       <motion.button
                         onClick={handleShuffleTitle}
@@ -1674,7 +1702,12 @@ function App() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              className="fixed inset-x-4 top-1/2 -translate-y-1/2 bg-black/90 backdrop-blur-xl border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[80vh] flex flex-col"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">
