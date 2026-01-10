@@ -81,14 +81,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     try {
       let result;
       if (mode === 'register') {
-        console.log('🔄 Attempting registration with email:', email, 'gender:', gender);
-        if (!gender) {
-          setError(isRussian ? 'Пожалуйста, выберите пол' : 'Please select gender');
+        console.log('🔄 Attempting registration with email:', email, 'gender:', gender, 'gender type:', typeof gender);
+        if (!gender || (gender !== 'male' && gender !== 'female')) {
+          console.error('❌ Gender validation failed:', gender);
+          setError(isRussian ? 'Пожалуйста, выберите пол (М или Ж)' : 'Please select gender (M or F)');
           setIsLoading(false);
           return;
         }
+        console.log('✅ Gender validated, proceeding with registration...');
         result = await signUpWithEmail(email, password, fullName, gender);
         console.log('📝 Registration result:', result.success ? 'Success' : 'Failed', result.error || '');
+        if (result.success && result.user) {
+          console.log('✅ User registered successfully, gender in user object:', result.user.gender);
+        }
       } else {
         console.log('🔄 Attempting login with email:', email);
         result = await signInWithEmail(email, password);
@@ -333,7 +338,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setGender('male')}
+                      onClick={() => {
+                        console.log('🔘 Gender selected: male');
+                        setGender('male');
+                      }}
                       className={`py-3 rounded-xl text-base font-medium transition-all ${
                         gender === 'male'
                           ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
@@ -344,7 +352,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setGender('female')}
+                      onClick={() => {
+                        console.log('🔘 Gender selected: female');
+                        setGender('female');
+                      }}
                       className={`py-3 rounded-xl text-base font-medium transition-all ${
                         gender === 'female'
                           ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
@@ -354,6 +365,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                       {isRussian ? 'Ж' : 'F'}
                     </button>
                   </div>
+                  {/* Отладочная информация */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <p className="text-white/30 text-xs mt-1">
+                      Selected: {gender || 'none'}
+                    </p>
+                  )}
                 </div>
               )}
 

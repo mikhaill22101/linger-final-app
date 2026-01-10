@@ -71,12 +71,16 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
     }
 
     // Загружаем профиль пользователя из таблицы profiles
-    // Приводим UUID к строке для избежания ошибок типов
-    const { data: profile } = await supabase
+    // Явное приведение UUID к строке ::text для избежания ошибок типов
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('email, phone, telegram_id, telegram_username, full_name, avatar_url, gender')
-      .eq('id', String(user.id)) // Приводим UUID к строке
+      .eq('id', String(user.id)) // Явное приведение UUID к строке ::text
       .single();
+    
+    if (profileError && profileError.code !== 'PGRST116') {
+      console.error('❌ Error loading profile:', profileError);
+    }
 
     return {
       id: String(user.id), // UUID всегда строка
@@ -155,11 +159,11 @@ export const signUpWithEmail = async (
       .eq('email', email.toLowerCase().trim()) // email как логический ключ
       .single();
 
-    let profileId = String(data.user.id); // UUID из Supabase Auth
+    let profileId = String(data.user.id); // Явное приведение UUID к строке ::text
 
     // Если профиль с таким email уже существует, используем его ID
     if (existingProfile && existingProfile.id) {
-      profileId = String(existingProfile.id);
+      profileId = String(existingProfile.id); // Явное приведение UUID к строке ::text
       console.log('ℹ️ Found existing profile by email, linking accounts:', profileId);
     }
 
@@ -167,16 +171,22 @@ export const signUpWithEmail = async (
     // Примечание: Триггер handle_new_user может уже создать профиль автоматически,
     // поэтому используем upsert для обновления существующего или создания нового
     // При регистрации всегда используем переданный gender (не сохраняем существующий, т.к. это новая регистрация)
-    const genderToSave = gender; // Используем переданный gender при регистрации
+    // created_at управляется автоматически через триггеры, не устанавливаем его вручную
+    const genderToSave = gender; // Используем переданный gender при регистрации ('male' или 'female')
+    
+    if (!genderToSave) {
+      return { success: false, error: 'Gender is required for registration' };
+    }
+    
+    console.log('💾 Saving profile with gender:', genderToSave, 'profileId:', String(profileId));
     
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
-        id: String(profileId), // Используем существующий UUID если найден по email, иначе новый (UUID как строка)
+        id: String(profileId), // Явное приведение UUID к строке ::text
         email: email.toLowerCase().trim(), // email как основной логический ключ для связывания аккаунтов
         full_name: fullName || null,
-        gender: genderToSave, // Сохраняем переданный gender при регистрации
-        created_at: existingProfile?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
+        gender: genderToSave, // Сохраняем переданный gender при регистрации ('male' или 'female')
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
@@ -213,17 +223,32 @@ export const signUpWithEmail = async (
       // Если профиль уже существует, продолжаем (это нормально при работе триггера)
     }
 
+    // Убеждаемся, что gender сохранен в базе данных
+    // Если триггер создал профиль без gender, обновляем его явно
+    if (genderToSave) {
+      const { error: genderUpdateError } = await supabase
+        .from('profiles')
+        .update({ gender: genderToSave })
+        .eq('id', String(profileId)); // Явное приведение UUID к строке ::text
+      
+      if (genderUpdateError && genderUpdateError.code !== '23505') {
+        console.warn('⚠️ Could not update gender after profile creation:', genderUpdateError);
+      } else {
+        console.log('✅ Gender explicitly saved to profile:', genderToSave);
+      }
+    }
+
     // Небольшая задержка для гарантии, что база данных успела обработать запрос
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 200));
 
     // Получаем обновленного пользователя из базы данных с полными данными
     // Это гарантирует, что мы получим актуальный gender после сохранения
     const updatedUser = await getCurrentUser();
     
-    if (updatedUser) {
+    if (updatedUser && updatedUser.id === String(profileId)) {
       // Если getCurrentUser вернул пользователя, используем его данные
       // Убеждаемся, что gender сохранен корректно (используем gender из базы данных)
-      console.log('✅ User profile saved successfully, gender from DB:', updatedUser.gender || genderToSave);
+      console.log('✅ User profile loaded from DB, gender:', updatedUser.gender || genderToSave);
       return {
         success: true,
         user: {
@@ -238,7 +263,7 @@ export const signUpWithEmail = async (
     return {
       success: true,
       user: {
-        id: String(profileId), // Используем ID найденного или созданного профиля (UUID как строка)
+        id: String(profileId), // Явное приведение UUID к строке ::text
         email: email.toLowerCase().trim(), // email как основной логический ключ
         full_name: fullName,
         gender: genderToSave, // Возвращаем сохраненный gender
@@ -400,14 +425,14 @@ export const verifyPhoneOTP = async (
 
     // Создаем или обновляем профиль пользователя
     // Поле gender остается null - пользователь должен выбрать его позже
+    // created_at управляется автоматически через триггеры, не устанавливаем его вручную
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
-        id: String(profileId), // Используем существующий UUID если найден по phone, иначе новый (UUID как строка)
+        id: String(profileId), // Явное приведение UUID к строке ::text
         phone: normalizedPhone,
         email: existingProfile?.email || null, // Сохраняем email если есть в существующем профиле
         gender: existingProfile?.gender || null, // Сохраняем существующий gender или null
-        created_at: existingProfile?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
@@ -543,17 +568,17 @@ export const signInWithTelegram = async (
     }
 
     // Создаем или обновляем профиль пользователя
+    // created_at управляется автоматически через триггеры, не устанавливаем его вручную
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
-        id: String(profileId), // Используем существующий UUID если найден по email, иначе новый (UUID как строка)
+        id: String(profileId), // Явное приведение UUID к строке ::text
         email: tempEmail, // Временный email для будущего связывания аккаунтов (Google, Apple)
         telegram_id: telegramUser.id,
         telegram_username: telegramUser.username || null,
         full_name: telegramUser.first_name || null,
         avatar_url: telegramUser.photo_url || null,
         gender: existingProfileByEmail?.gender || null, // Сохраняем существующий gender или null (пользователь должен выбрать позже)
-        created_at: existingProfileByEmail?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
