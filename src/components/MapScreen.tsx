@@ -1108,8 +1108,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         </div>
       )}
 
-      {/* Кнопка "Назад" - ярко-белая и глянцевая */}
-      {status === 'ready' && !isSelectionMode && (
+      {/* Кнопка "Назад" - ярко-белая и глянцевая (только если onBack передан, т.е. на отдельной странице карты, не на HomeScreen) */}
+      {status === 'ready' && !isSelectionMode && onBack && (
         <button
           onClick={() => {
             if (onBack) {

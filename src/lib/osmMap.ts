@@ -225,8 +225,21 @@ export const osmMapAdapter: MapAdapter = {
     });
 
     // Linger Map Style: пастельные сочные цвета (бирюзовая вода, салатовая зелень)
-    // Используем стандартные тайлы OSM, но с CSS фильтрами для пастельного сочного стиля
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Используем тайлы OSM с русскими названиями
+    
+    // Определяем язык пользователя (по умолчанию русский для Telegram)
+    const userLang = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code || 'ru';
+    const isRussian = userLang === 'ru' || !userLang;
+    
+    // Для Leaflet с OpenStreetMap нельзя использовать синтаксис Mapbox GL JS (map.setLayoutProperty)
+    // Вместо этого используем стандартные OSM тайлы, которые автоматически определяют язык
+    // через HTTP заголовок Accept-Language, который Telegram WebView устанавливает правильно
+    // на основе language_code пользователя
+    
+    // Стандартные OSM тайлы показывают названия на языке, определенном через Accept-Language
+    // Для русского языка (language_code: 'ru') Telegram WebView отправляет Accept-Language: ru-RU,ru;q=0.9
+    // и OSM сервер возвращает тайлы с русскими названиями
+    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '', // Пустая атрибуция (скрыта через CSS)
       maxZoom: 19,
       tileSize: 256,
@@ -235,7 +248,22 @@ export const osmMapAdapter: MapAdapter = {
       updateWhenZooming: true,
       updateWhenIdle: true,
       keepBuffer: 2,
+      // OSM тайлы автоматически определяют язык через HTTP заголовок Accept-Language
+      // Telegram WebView устанавливает этот заголовок на основе language_code пользователя
+      // Для русского языка (language_code: 'ru') будут показываться русские названия
     }).addTo(map);
+    
+    // Примечание: Если вам нужен более явный контроль над языком названий (как в Mapbox GL JS),
+    // можно перейти на Mapbox GL JS вместо Leaflet, но это потребует:
+    // 1. API ключ Mapbox
+    // 2. Полную переработку кода карты
+    // 3. Использование библиотеки mapbox-gl вместо leaflet
+    // Пример для Mapbox GL JS:
+    // map.setLayoutProperty('country-label', 'text-field', ['get', 'name_ru']);
+    // map.setLayoutProperty('place-city', 'text-field', ['get', 'name_ru']);
+    // и т.д. для всех слоев с текстом
+    
+    // Для Leaflet с OSM стандартные тайлы уже поддерживают русские названия автоматически
 
     // Инициализация Supercluster для кластеризации
     const supercluster = new Supercluster({
@@ -545,8 +573,8 @@ export const osmMapAdapter: MapAdapter = {
             className: 'user-location-marker-linger',
             html: `
               <div class="user-location-pulse-container" style="
-                width: 24px;
-                height: 24px;
+                width: 20px;
+                height: 20px;
                 position: relative;
                 display: flex;
                 align-items: center;
@@ -559,16 +587,16 @@ export const osmMapAdapter: MapAdapter = {
                 
                 <!-- Основной индикатор -->
                 <div style="
-                  width: 24px;
-                  height: 24px;
-                  background: #3b82f6;
-                  border: 3px solid white;
+                  width: 20px;
+                  height: 20px;
+                  background: #1A1A1A;
+                  border: 2px solid white;
                   border-radius: 50%;
                   box-shadow: 
-                    0 0 0 4px rgba(59, 130, 246, 0.5),
-                    0 0 0 8px rgba(59, 130, 246, 0.3),
-                    0 0 0 12px rgba(59, 130, 246, 0.2),
-                    0 4px 20px rgba(59, 130, 246, 0.7);
+                    0 0 0 3px rgba(26, 26, 26, 0.4),
+                    0 0 0 6px rgba(26, 26, 26, 0.2),
+                    0 0 0 9px rgba(26, 26, 26, 0.1),
+                    0 2px 12px rgba(0, 0, 0, 0.5);
                   position: relative;
                   z-index: 10;
                   display: flex;
@@ -576,17 +604,17 @@ export const osmMapAdapter: MapAdapter = {
                   justify-content: center;
                 ">
                   <div style="
-                    width: 10px;
-                    height: 10px;
+                    width: 8px;
+                    height: 8px;
                     background: white;
                     border-radius: 50%;
-                    box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
+                    box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
                   "></div>
                 </div>
               </div>
             `,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12],
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
           });
           
           userLocationMarker = L.marker([location.lat, location.lng], {

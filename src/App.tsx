@@ -154,12 +154,16 @@ function App() {
   const [searchQuery, setSearchQuery] = useState(''); // Поисковый запрос для умного подбора категории
   const [highlightedCategory, setHighlightedCategory] = useState<string | null>(null); // Подсвеченная категория из поиска
   const [showFriendsMap, setShowFriendsMap] = useState(false); // Режим просмотра друзей на карте
-  const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; location_lat?: number; location_lng?: number }>>([]); // Список друзей с координатами
+  const [showFriendsList, setShowFriendsList] = useState(false); // Модальное окно списка друзей
+  const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; location_lat?: number; location_lng?: number; last_seen?: string | null; current_event?: { id: number; category: string; icon: string } | null }>>([]); // Список друзей с координатами
+  const [friendsSearchQuery, setFriendsSearchQuery] = useState(''); // Поиск по друзьям
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false); // Загрузка списка друзей
   const [selectedEventDetail, setSelectedEventDetail] = useState<Impulse | null>(null); // Детальное окно события
   const [showCelebration, setShowCelebration] = useState(false); // Анимация празднования
   const [userOnlineStatus, setUserOnlineStatus] = useState(false); // Статус онлайна пользователя
   const [userLastSeen, setUserLastSeen] = useState<string | null>(null); // last_seen пользователя
   const heroCardRef = useRef<HTMLDivElement>(null); // Ref для Hero-карточки для отслеживания скролла
+  const friendsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска друзей
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -453,6 +457,101 @@ function App() {
       loadFeed();
     }
   }, [userLocation]);
+
+  // Загрузка списка друзей
+  const loadFriendsList = async () => {
+    const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    if (!currentUserId || !isSupabaseConfigured) {
+      setFriends([]);
+      return;
+    }
+
+    try {
+      setIsLoadingFriends(true);
+      const { data, error } = await supabase
+        .from('friendships')
+        .select(`
+          id,
+          user_id,
+          friend_id,
+          profiles_user:user_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng),
+          profiles_friend:friend_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng)
+        `)
+        .or(`user_id.eq.${currentUserId},friend_id.eq.${currentUserId}`);
+
+      if (error) {
+        console.error('❌ Error loading friends:', error);
+        setFriends([]);
+        return;
+      }
+
+      // Преобразуем данные: для каждой дружбы берем профиль друга (не текущего пользователя)
+      const friendsList = (data || []).map((friendship: any) => {
+        const friendProfile = friendship.user_id === currentUserId 
+          ? friendship.profiles_friend 
+          : friendship.profiles_user;
+        
+        const friendId = friendProfile?.id || (friendship.user_id === currentUserId ? friendship.friend_id : friendship.user_id);
+        
+        return {
+          id: friendId,
+          full_name: friendProfile?.full_name,
+          avatar_url: friendProfile?.avatar_url,
+          username: friendProfile?.username,
+          last_seen: friendProfile?.last_seen || null,
+          location_lat: friendProfile?.location_lat || null,
+          location_lng: friendProfile?.location_lng || null,
+          current_event: null, // Будет заполнено при проверке событий
+        };
+      }).filter((f: any) => f.id); // Убираем пустые записи
+
+      // Проверяем, находятся ли друзья на событиях
+      if (friendsList.length > 0) {
+        try {
+          const { data: events } = await supabase
+            .from('impulses')
+            .select('id, category, location_lat, location_lng, content')
+            .not('location_lat', 'is', null)
+            .not('location_lng', 'is', null);
+          
+          if (events && events.length > 0) {
+            friendsList.forEach((friend) => {
+              if (friend.location_lat && friend.location_lng) {
+                // Ищем ближайшее событие в радиусе 50 метров
+                const nearestEvent = events.find((event: any) => {
+                  const distance = calculateDistance(
+                    friend.location_lat!,
+                    friend.location_lng!,
+                    event.location_lat,
+                    event.location_lng
+                  );
+                  return distance < 0.05; // 50 метров = 0.05 км
+                });
+                
+                if (nearestEvent) {
+                  const iconData = getSmartIcon(nearestEvent.content || nearestEvent.category);
+                  friend.current_event = {
+                    id: nearestEvent.id,
+                    category: nearestEvent.category,
+                    icon: iconData.emoji,
+                  };
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to check friend events:', err);
+        }
+      }
+
+      setFriends(friendsList);
+    } catch (err) {
+      console.error('Failed to load friends:', err);
+      setFriends([]);
+    } finally {
+      setIsLoadingFriends(false);
+    }
+  };
 
   // Загрузка количества непрочитанных сообщений и уведомлений
   const loadUnreadMessagesCount = async () => {
@@ -1103,8 +1202,10 @@ function App() {
               <div className="flex items-center gap-3">
                 {/* Кнопка просмотра друзей */}
                 <button
-                  onClick={() => {
-                    setShowFriendsMap(!showFriendsMap);
+                  onClick={async () => {
+                    // Загружаем список друзей перед открытием
+                    await loadFriendsList();
+                    setShowFriendsList(true);
                     if (window.Telegram?.WebApp?.HapticFeedback) {
                       try {
                         window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
@@ -1113,11 +1214,7 @@ function App() {
                       }
                     }
                   }}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 ${
-                    showFriendsMap 
-                      ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 shadow-lg shadow-purple-500/30' 
-                      : 'bg-white/10 border border-white/20 backdrop-blur-sm'
-                  }`}
+                  className="w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 bg-white/10 border border-white/20 backdrop-blur-sm"
                 >
                   <UsersRound size={20} className="text-white" />
                 </button>
@@ -1282,15 +1379,20 @@ function App() {
                       {/* Лица друзей (аватарки), если они туда идут */}
                       {/* TODO: Добавить загрузку участников события из БД */}
                       
-                      {/* Время начала события */}
-                      {feed[0].event_time && (
-                        <div className="flex items-center gap-2 mt-2">
-                          <Clock size={14} className="text-white/60 flex-shrink-0" />
-                          <span className="text-sm text-white/70">
-                            {formatEventStartTime(feed[0].event_date, feed[0].event_time) || `Начало в ${feed[0].event_time}`}
-                    </span>
-                </div>
-                      )}
+                      {/* Время публикации и начала события */}
+                      <div className="flex flex-col gap-1.5 mt-3">
+                        <div className="text-xs text-white/60">
+                          {formatPublishedTime(feed[0].created_at)}
+                        </div>
+                        {feed[0].event_time && (
+                          <div className="flex items-center gap-2">
+                            <Clock size={14} className="text-white/60 flex-shrink-0" />
+                            <span className="text-sm text-white/70">
+                              {formatEventStartTime(feed[0].event_date, feed[0].event_time) || `Начало в ${feed[0].event_time}`}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -2003,6 +2105,150 @@ function App() {
                   </>
                 )}
               </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Модальное окно списка друзей */}
+      <AnimatePresence>
+        {showFriendsList && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowFriendsList(false);
+                setFriendsSearchQuery('');
+              }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[85vh] flex flex-col"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-light text-white">
+                  {isRussian ? 'Друзья' : 'Friends'}
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowFriendsList(false);
+                    setFriendsSearchQuery('');
+                  }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+
+              {/* Поле поиска друзей - не активное при открытии */}
+              <div className="relative mb-4">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                <input
+                  ref={friendsSearchInputRef}
+                  type="text"
+                  value={friendsSearchQuery}
+                  onChange={(e) => setFriendsSearchQuery(e.target.value)}
+                  placeholder={isRussian ? 'Поиск друзей...' : 'Search friends...'}
+                  className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
+                  onFocus={() => {
+                    // Поле становится активным только при явном клике
+                  }}
+                />
+              </div>
+
+              {/* Список друзей */}
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {isLoadingFriends ? (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {isRussian ? 'Загрузка...' : 'Loading...'}
+                  </div>
+                ) : friends.length === 0 ? (
+                  <div className="text-center py-8 text-white/40 text-sm">
+                    {isRussian ? 'Пока нет друзей' : 'No friends yet'}
+                  </div>
+                ) : (
+                  (friendsSearchQuery.trim() === '' ? friends : friends.filter(friend => 
+                    (friend.full_name?.toLowerCase().includes(friendsSearchQuery.toLowerCase()) || 
+                     friend.username?.toLowerCase().includes(friendsSearchQuery.toLowerCase()))
+                  )).map((friend) => {
+                    // Проверяем онлайн статус (last_seen менее 5 минут назад)
+                    const isOnline = friend.last_seen ? 
+                      (new Date().getTime() - new Date(friend.last_seen).getTime()) < 5 * 60 * 1000 : 
+                      false;
+
+                    return (
+                      <motion.div
+                        key={friend.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                        onClick={() => {
+                          handleUserProfileClick(
+                            friend.id,
+                            friend.full_name || undefined,
+                            friend.avatar_url || undefined,
+                            friend.username || undefined
+                          );
+                          setShowFriendsList(false);
+                          setFriendsSearchQuery('');
+                        }}
+                      >
+                        {/* Аватар друга с индикатором онлайн */}
+                        <div className="relative flex-shrink-0">
+                          {friend.avatar_url ? (
+                            <img
+                              src={friend.avatar_url}
+                              alt={friend.full_name || 'Friend'}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-white/20"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white font-bold">
+                              {(friend.full_name || friend.username || 'F')[0].toUpperCase()}
+                            </div>
+                          )}
+                          {/* Индикатор онлайн или события */}
+                          <div
+                            className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-black ${
+                              friend.current_event
+                                ? 'bg-white flex items-center justify-center'
+                                : isOnline
+                                ? 'bg-green-500'
+                                : 'bg-gray-500'
+                            }`}
+                          >
+                            {friend.current_event && (
+                              <span className="text-xs">{friend.current_event.icon}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Имя друга */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {friend.full_name || friend.username || 'Friend'}
+                          </p>
+                          {friend.current_event && (
+                            <p className="text-xs text-white/60 truncate">
+                              {isRussian ? `На событии: ${friend.current_event.category}` : `At event: ${friend.current_event.category}`}
+                            </p>
+                          )}
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                )}
+              </div>
             </motion.div>
           </>
         )}
