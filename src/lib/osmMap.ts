@@ -614,7 +614,8 @@ export const osmMapAdapter: MapAdapter = {
               </div>
             `,
             iconSize: [20, 20],
-            iconAnchor: [10, 10],
+            iconAnchor: [10, 10], // Точный центр маркера (10px = половина от 20px)
+            popupAnchor: [0, -10], // Смещение для popup (если понадобится)
           });
           
           userLocationMarker = L.marker([location.lat, location.lng], {

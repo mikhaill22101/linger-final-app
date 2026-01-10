@@ -1271,6 +1271,7 @@ function App() {
                 refreshTrigger={mapRefreshTrigger}
                 isBackground={false}
                 maxEvents={4}
+                userLocation={userLocation} // Передаем userLocation для принудительного центрирования
                 onEventLongPress={async (impulse) => {
                   setSelectedEventDetail(impulse as Impulse);
                   if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -1389,8 +1390,8 @@ function App() {
                             <Clock size={14} className="text-white/60 flex-shrink-0" />
                             <span className="text-sm text-white/70">
                               {formatEventStartTime(feed[0].event_date, feed[0].event_time) || `Начало в ${feed[0].event_time}`}
-                            </span>
-                          </div>
+                    </span>
+                </div>
                         )}
                       </div>
                     </div>

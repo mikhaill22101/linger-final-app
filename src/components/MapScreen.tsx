@@ -278,9 +278,10 @@ interface MapScreenProps {
   friends?: Friend[]; // Список друзей для отображения
   onFriendsNearby?: (friendIds: number[]) => void; // Коллбэк когда друзья рядом
   maxEvents?: number; // Максимальное количество событий для отображения (для главной страницы - 3-4)
+  userLocation?: GeoLocation | null; // Координаты пользователя из родительского компонента (для принудительного центрирования)
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress, showFriends = false, friends = [], onFriendsNearby, maxEvents }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress, showFriends = false, friends = [], onFriendsNearby, maxEvents, userLocation: propUserLocation }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -338,57 +339,80 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         try {
             console.log('[MapScreen] Начало инициализации карты...');
             
-            // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
-            const currentUserLocation = await getUserLocation();
-            setUserLocation(currentUserLocation);
+            // Используем propUserLocation если передан, иначе получаем геопозицию
+            let currentUserLocation: GeoLocation;
+            if (propUserLocation) {
+              currentUserLocation = propUserLocation;
+              setUserLocation(propUserLocation);
+              console.log('[MapScreen] Используем userLocation из props:', propUserLocation);
+            } else {
+              // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
+              currentUserLocation = await getUserLocation();
+              setUserLocation(currentUserLocation);
+              console.log('[MapScreen] Получена геопозиция через getUserLocation:', currentUserLocation);
+            }
+            
             const isDefaultLocation = currentUserLocation.lat === DEFAULT_LOCATION.lat && currentUserLocation.lng === DEFAULT_LOCATION.lng;
             const finalZoom = isDefaultLocation ? 13 : 15;
-            const initialZoom = 2.5; // Начальный zoom для эффекта полета (как в Zenly)
+            const initialZoom = isBackground || maxEvents ? 14 : 2.5; // Для HomeScreen сразу используем нормальный zoom
 
-            console.log('[MapScreen] Создание карты:', currentUserLocation, 'final zoom:', finalZoom);
+            console.log('[MapScreen] Создание карты:', currentUserLocation, 'final zoom:', finalZoom, 'initial zoom:', initialZoom);
             
             if (!mapRef.current) {
               throw new Error('mapRef.current is null перед инициализацией');
             }
 
-            // Инициализируем карту с большим zoom для эффекта полета
+            // Инициализируем карту (для HomeScreen сразу с финальным zoom, для отдельной страницы - с эффектом полета)
             const map = await osmMapAdapter.initMap(mapRef.current, currentUserLocation, initialZoom);
             mapInstanceRef.current = map;
             
-            // Добавляем яркую синюю булавку локации пользователя
-            if (mapInstanceRef.current.setUserLocation) {
-              mapInstanceRef.current.setUserLocation(currentUserLocation);
-            }
-
             // ПРИНУДИТЕЛЬНЫЙ Resize для Leaflet (сразу после создания)
             if (mapInstanceRef.current.invalidateSize) {
               mapInstanceRef.current.invalidateSize();
-              // Дополнительный вызов через небольшой таймаут для надежности
               setTimeout(() => {
                 if (mapInstanceRef.current?.invalidateSize) {
                   mapInstanceRef.current.invalidateSize();
           }
         }, 100);
             }
+            
+            // Добавляем антрацитовую булавку локации пользователя
+            if (mapInstanceRef.current.setUserLocation) {
+              mapInstanceRef.current.setUserLocation(currentUserLocation);
+            }
+            
+            // Для HomeScreen (isBackground или maxEvents) центрируем сразу с правильным zoom
+            if (isBackground || maxEvents) {
+              // Принудительное центрирование на координатах пользователя для HomeScreen
+              setTimeout(() => {
+                if (mapInstanceRef.current) {
+                  // Принудительно центрируем карту на пользователе с zoom 14 для HomeScreen
+                  mapInstanceRef.current.flyTo(currentUserLocation, finalZoom, 0.6); // Плавная анимация за 0.6 секунды
+                  console.log('[MapScreen] Карта принудительно центрирована на пользователе для HomeScreen (zoom:', finalZoom, ')');
+                }
+              }, 250); // Небольшая задержка для завершения инициализации и invalidateSize
+            }
 
-            // Эффект плавного полета камеры (Zenly Style): от большого zoom к текущей позиции
-            setTimeout(() => {
-              if (mapInstanceRef.current) {
-                // Плавный полет к текущей позиции с финальным zoom за 1.8 секунды
-                mapInstanceRef.current.flyTo(currentUserLocation, finalZoom);
-                
-                // Haptic feedback при завершении "приземления" камеры
-                setTimeout(() => {
-                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                    try {
-                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                    } catch (e) {
-                      console.warn('[MapScreen] Haptic error:', e);
+            // Эффект плавного полета камеры (Zenly Style): только для отдельной страницы карты, не для HomeScreen
+            if (!isBackground && !maxEvents) {
+              setTimeout(() => {
+                if (mapInstanceRef.current) {
+                  // Плавный полет к текущей позиции с финальным zoom за 1.8 секунды
+                  mapInstanceRef.current.flyTo(currentUserLocation, finalZoom);
+                  
+                  // Haptic feedback при завершении "приземления" камеры
+                  setTimeout(() => {
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {
+                        console.warn('[MapScreen] Haptic error:', e);
+                      }
                     }
-                  }
-                }, 1800); // Через 1.8 секунды (время анимации flyTo)
-              }
-            }, 300); // Небольшая задержка перед началом полета
+                  }, 1800); // Через 1.8 секунды (время анимации flyTo)
+                }
+              }, 300); // Небольшая задержка перед началом полета
+            }
 
             // Загружаем данные из Supabase после отрисовки карты
             console.log('[MapScreen] Загрузка импульсов из Supabase...');
@@ -515,6 +539,45 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         initMap();
       }, 150); // Задержка для Telegram WebView
     }, []);
+
+  // ПРИНУДИТЕЛЬНОЕ ЦЕНТРИРОВАНИЕ: Если propUserLocation передан из родителя (HomeScreen), центрируем карту при его изменении
+  useEffect(() => {
+    if (status === 'ready' && propUserLocation && mapInstanceRef.current) {
+      console.log('[MapScreen] Принудительное центрирование на userLocation из props:', propUserLocation);
+      
+      // Обновляем внутренний userLocation
+      setUserLocation(propUserLocation);
+      
+      // Обновляем маркер пользователя
+      if (mapInstanceRef.current.setUserLocation) {
+        mapInstanceRef.current.setUserLocation(propUserLocation);
+      }
+      
+      // Принудительно центрируем карту на пользователе
+      const isDefaultLocation = propUserLocation.lat === DEFAULT_LOCATION.lat && propUserLocation.lng === DEFAULT_LOCATION.lng;
+      // Для HomeScreen (maxEvents) используем zoom 14, для отдельной страницы - 15
+      const finalZoom = isDefaultLocation ? 13 : (maxEvents ? 14 : 15);
+      
+      // Используем invalidateSize перед центрированием для карты в скрытом/изменяющемся контейнере
+      if (mapInstanceRef.current.invalidateSize) {
+        mapInstanceRef.current.invalidateSize();
+        // Второй вызов через небольшую задержку для гарантии
+        setTimeout(() => {
+          if (mapInstanceRef.current?.invalidateSize) {
+            mapInstanceRef.current.invalidateSize();
+          }
+        }, 50);
+      }
+      
+      // Плавно центрируем карту на пользователе (flyTo для плавной анимации)
+      setTimeout(() => {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.flyTo(propUserLocation, finalZoom, 0.6);
+          console.log('[MapScreen] Карта принудительно центрирована на пользователе (zoom:', finalZoom, ') для HomeScreen:', !!maxEvents);
+        }
+      }, 150); // Небольшая задержка для завершения invalidateSize
+    }
+  }, [propUserLocation, status]);
 
   // Обновляем данные при изменении refreshTrigger
   useEffect(() => {
