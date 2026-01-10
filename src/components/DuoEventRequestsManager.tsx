@@ -84,7 +84,8 @@ export const DuoEventRequestsManager: React.FC<DuoEventRequestsManagerProps> = (
 
   // Если участник уже выбран
   if (hasSelectedParticipant && selectedParticipantId) {
-    const selectedRequest = requests.find(r => r.user_id === selectedParticipantId);
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    const selectedRequest = requests.find(r => String(r.user_id) === String(selectedParticipantId));
     
     return (
       <div className="space-y-3">

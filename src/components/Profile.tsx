@@ -6,6 +6,7 @@ import WebApp from '@twa-dev/sdk';
 import { getSmartIcon } from '../lib/smartIcon';
 import { notifyFriendAdded } from '../lib/notifications';
 import { syncUserProfile } from '../lib/auth';
+import { getCurrentUser, getUserId } from '../lib/auth-universal';
 
 interface TelegramUser {
   id?: number;
@@ -35,11 +36,13 @@ interface MyImpulse {
 
 const Profile: React.FC = () => {
   const [profile, setProfile] = useState<ProfileState>({
+    id: '', // UUID из Supabase Auth (единый ID для всех платформ)
     firstName: '',
     username: '',
     photoUrl: undefined,
     bio: '',
     telegramId: undefined,
+    telegram_username: undefined,
     gender: null,
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -86,13 +89,13 @@ const Profile: React.FC = () => {
   // Загрузка профиля из базы данных
   // Обновление last_seen при активности пользователя
   useEffect(() => {
-    if (profile.telegramId && isSupabaseConfigured) {
+    if (profile.id && isSupabaseConfigured) {
       const updateLastSeen = async () => {
         try {
           await supabase
             .from('profiles')
             .update({ last_seen: new Date().toISOString() })
-            .eq('id', profile.telegramId);
+            .eq('id', profile.id); // Используем UUID
         } catch (err) {
           console.warn('Failed to update last_seen:', err);
         }
@@ -104,7 +107,7 @@ const Profile: React.FC = () => {
       
       return () => clearInterval(interval);
     }
-  }, [profile.telegramId, isSupabaseConfigured]);
+  }, [profile.id, isSupabaseConfigured]);
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -354,11 +357,14 @@ const Profile: React.FC = () => {
         }
 
         // Рейтинг Чуни = количество созданных пользователем событий (отдельный запрос)
-        const { data: myEventsData } = await supabase
-          .from('impulses')
-          .select('id')
-          .eq('creator_id', profile.telegramId);
-        setChuniRating(myEventsData?.length || 0);
+        // Используем UUID из profile.id (загруженного через getCurrentUser в loadProfile)
+        if (profile.id) {
+          const { data: myEventsData } = await supabase
+            .from('impulses')
+            .select('id')
+            .eq('creator_id', profile.id); // Используем UUID
+          setChuniRating(myEventsData?.length || 0);
+        }
       } catch (err) {
         console.error('Failed to load nearest impulses:', err);
         setMyImpulses([]);
@@ -393,7 +399,7 @@ const Profile: React.FC = () => {
             profiles_user:user_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng),
             profiles_friend:friend_id (id, full_name, avatar_url, username, last_seen, location_lat, location_lng)
           `)
-          .or(`user_id.eq.${profile.telegramId},friend_id.eq.${profile.telegramId}`);
+          .or(`user_id.eq.${profile.id},friend_id.eq.${profile.id}`); // Используем UUID
 
         if (error) {
           console.error('❌ Error loading friends from Supabase:', error);
@@ -401,11 +407,11 @@ const Profile: React.FC = () => {
         } else {
           // Преобразуем данные: для каждой дружбы берем профиль друга (не текущего пользователя)
           const friendsList = (data || []).map((friendship: any) => {
-            const friendProfile = friendship.user_id === profile.telegramId 
+            const friendProfile = String(friendship.user_id) === String(profile.id)
               ? friendship.profiles_friend 
               : friendship.profiles_user;
             
-            const friendId = friendProfile?.id || (friendship.user_id === profile.telegramId ? friendship.friend_id : friendship.user_id);
+            const friendId = friendProfile?.id || (String(friendship.user_id) === String(profile.id) ? friendship.friend_id : friendship.user_id);
             
             return {
               id: friendId,
@@ -487,7 +493,12 @@ const Profile: React.FC = () => {
   }, [profile.telegramId]);
 
   const handleDeleteImpulse = async (id: number) => {
-    if (!profile.telegramId) return;
+    // Используем UUID из auth вместо telegramId
+    const currentUserId = await getUserId();
+    if (!currentUserId) {
+      WebApp.showAlert('Ошибка: Пользователь не авторизован');
+      return;
+    }
 
     if (!isSupabaseConfigured) {
       WebApp.showAlert('Ошибка: База данных не настроена');
@@ -501,7 +512,7 @@ const Profile: React.FC = () => {
         .from('impulses')
         .delete()
         .eq('id', id)
-        .eq('creator_id', profile.telegramId);
+        .eq('creator_id', currentUserId); // Используем UUID
 
       if (error) {
         console.error('❌ Error deleting impulse from Supabase:', error);
@@ -562,8 +573,11 @@ const Profile: React.FC = () => {
   };
 
   const handleSaveBio = async () => {
-    if (!profile.telegramId) {
-      console.error('Telegram ID is missing');
+    // Используем UUID из auth вместо telegramId
+    const currentUserId = await getUserId();
+    if (!currentUserId) {
+      console.error('User ID (UUID) is missing');
+      WebApp.showAlert('Ошибка: Пользователь не авторизован');
       return;
     }
 
@@ -581,9 +595,9 @@ const Profile: React.FC = () => {
 
     try {
       // Сохраняем данные в Supabase методом upsert
-      // id должен быть bigint из Telegram user.id
+      // Используем UUID из Supabase Auth как id
       const updateData: any = {
-          id: profile.telegramId, // bigint из Telegram user.id
+          id: currentUserId, // UUID из Supabase Auth (единый ID для всех платформ)
           full_name: profile.firstName,
           bio: profile.bio,
           gender: profile.gender || null,
@@ -2353,7 +2367,7 @@ const Profile: React.FC = () => {
                                   profiles_user:user_id (id, full_name, avatar_url, username),
                                   profiles_friend:friend_id (id, full_name, avatar_url, username)
                                 `)
-                                .or(`user_id.eq.${profile.telegramId},friend_id.eq.${profile.telegramId}`);
+                                .or(`user_id.eq.${profile.id},friend_id.eq.${profile.id}`); // Используем UUID
                               if (!error && data) {
                                 const friendsList = (data || []).map((friendship: any) => {
                                   const friendProfile = friendship.user_id === profile.telegramId 

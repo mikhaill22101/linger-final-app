@@ -477,11 +477,53 @@ function App() {
 
     checkAuth();
 
-    // Слушаем изменения сессии (для OAuth редиректов)
+    // Слушаем изменения сессии (для OAuth редиректов: Google, Apple)
+    // При OAuth входе автоматически связываем аккаунты по email
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('🔄 Auth state changed:', event, session?.user?.id);
       
-      if (event === 'SIGNED_IN' && session) {
+      if (event === 'SIGNED_IN' && session && session.user) {
+        // OAuth редирект: проверяем, нужно ли связать аккаунты по email
+        const userEmail = session.user.email;
+        if (userEmail) {
+          // Ищем существующий профиль по email (основной логический ключ)
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, email, gender')
+            .eq('email', userEmail.toLowerCase().trim())
+            .single();
+
+          if (existingProfile && String(existingProfile.id) !== String(session.user.id)) {
+            // Профиль с таким email уже существует - связываем аккаунты
+            console.log('ℹ️ Found existing profile by email, linking OAuth account:', existingProfile.id);
+            
+            // Обновляем профиль, добавляя данные из OAuth
+            await supabase
+              .from('profiles')
+              .update({
+                full_name: session.user.user_metadata?.full_name || existingProfile.full_name || null,
+                avatar_url: session.user.user_metadata?.avatar_url || existingProfile.avatar_url || null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', String(existingProfile.id)); // Используем существующий UUID
+          } else if (!existingProfile) {
+            // Новый OAuth пользователь - создаем профиль
+            await supabase
+              .from('profiles')
+              .upsert({
+                id: String(session.user.id), // UUID из Supabase Auth
+                email: userEmail.toLowerCase().trim(), // email как основной логический ключ
+                full_name: session.user.user_metadata?.full_name || null,
+                avatar_url: session.user.user_metadata?.avatar_url || null,
+                gender: null, // Пользователь должен выбрать пол позже
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }, {
+                onConflict: 'id',
+              });
+          }
+        }
+
         const user = await getCurrentUser();
         if (user) {
           await handleAuthSuccess(user);
@@ -630,11 +672,12 @@ function App() {
 
       // Преобразуем данные: для каждой дружбы берем профиль друга (не текущего пользователя)
       const friendsList = (data || []).map((friendship: any) => {
-        const friendProfile = friendship.user_id === currentUserId 
+        // Сравнение UUID (строки): приводим к строкам для надежности
+        const friendProfile = String(friendship.user_id) === String(currentUserId)
           ? friendship.profiles_friend 
           : friendship.profiles_user;
         
-        const friendId = friendProfile?.id || (friendship.user_id === currentUserId ? friendship.friend_id : friendship.user_id);
+        const friendId = friendProfile?.id || (String(friendship.user_id) === String(currentUserId) ? friendship.friend_id : friendship.user_id);
         
         return {
           id: friendId,
@@ -1138,10 +1181,10 @@ function App() {
               .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
             
             if (friendships && friendships.length > 0) {
-              // Получаем ID друзей
+              // Получаем ID друзей (сравнение UUID как строк)
               const friendIds = friendships.map((f: any) => 
-                f.user_id === userId ? f.friend_id : f.user_id
-              ).filter((id: number) => id !== userId);
+                String(f.user_id) === String(userId) ? f.friend_id : f.user_id
+              ).filter((id: string) => String(id) !== String(userId)); // UUID - строка
               
               // Загружаем координаты друзей
               if (friendIds.length > 0) {
@@ -1881,7 +1924,8 @@ function App() {
                   <div className="pt-4 border-t border-white/10">
                   {(() => {
                       const currentUserId = currentAuthUser?.id;
-                      const isCreator = selectedEventDetail.creator_id === currentUserId;
+                      // Сравнение UUID (строки): приводим к строкам для надежности
+                      const isCreator = String(selectedEventDetail.creator_id) === String(currentUserId);
                       const hasSelectedParticipant = !!selectedEventDetail.selected_participant_id;
 
                       // Если это создатель события - показываем список запросов
@@ -1889,9 +1933,9 @@ function App() {
                         return (
                           <DuoEventRequestsManager
                             eventId={selectedEventDetail.id}
-                            creatorId={selectedEventDetail.creator_id}
+                            creatorId={String(selectedEventDetail.creator_id)} // Преобразуем UUID в строку
                             hasSelectedParticipant={hasSelectedParticipant}
-                            selectedParticipantId={selectedEventDetail.selected_participant_id}
+                            selectedParticipantId={selectedEventDetail.selected_participant_id ? String(selectedEventDetail.selected_participant_id) : null} // Преобразуем UUID в строку
                             onParticipantSelected={() => {
                               // Перезагружаем событие после выбора участника
                               loadFeed();
@@ -1922,7 +1966,8 @@ function App() {
                       }
 
                       // Если участник уже выбран
-                      if (hasSelectedParticipant && selectedEventDetail.selected_participant_id === currentUserId) {
+                      // Сравнение UUID (строки): приводим к строкам для надежности
+                      if (hasSelectedParticipant && selectedEventDetail.selected_participant_id && String(selectedEventDetail.selected_participant_id) === String(currentUserId)) {
                         return (
                           <div className="p-3 bg-green-500/20 border border-green-400/30 rounded-xl">
                             <div className="flex items-center gap-2 text-green-200 text-sm">

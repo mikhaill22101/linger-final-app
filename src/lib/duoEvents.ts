@@ -38,7 +38,8 @@ export const sendDuoEventRequest = async (
       return { success: false, error: 'Event is not a Duo event' };
     }
 
-    if (event.creator_id === userId) {
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    if (String(event.creator_id) === String(userId)) {
       return { success: false, error: 'You are the creator of this event' };
     }
 
@@ -113,7 +114,8 @@ export const loadDuoEventRequests = async (
       .eq('id', eventId)
       .single();
 
-    if (!event || event.creator_id !== creatorId) {
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    if (!event || String(event.creator_id) !== String(creatorId)) {
       return [];
     }
 
@@ -163,7 +165,8 @@ export const acceptDuoEventRequest = async (
       .eq('id', eventId)
       .single();
 
-    if (!event || event.creator_id !== creatorId) {
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    if (!event || String(event.creator_id) !== String(creatorId)) {
       return { success: false, error: 'Unauthorized' };
     }
 
@@ -244,7 +247,8 @@ export const rejectDuoEventRequest = async (
       .eq('id', eventId)
       .single();
 
-    if (!event || event.creator_id !== creatorId) {
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    if (!event || String(event.creator_id) !== String(creatorId)) {
       return { success: false, error: 'Unauthorized' };
     }
 

@@ -71,21 +71,22 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
     }
 
     // Загружаем профиль пользователя из таблицы profiles
+    // Приводим UUID к строке для избежания ошибок типов
     const { data: profile } = await supabase
       .from('profiles')
-      .select('telegram_id, telegram_username, full_name, avatar_url')
-      .eq('id', user.id)
+      .select('email, phone, telegram_id, telegram_username, full_name, avatar_url, gender')
+      .eq('id', String(user.id)) // Приводим UUID к строке
       .single();
 
     return {
-      id: user.id,
-      email: user.email,
-      phone: user.phone,
+      id: String(user.id), // UUID всегда строка
+      email: profile?.email || user.email || undefined,
+      phone: profile?.phone || user.phone || undefined,
       telegram_id: profile?.telegram_id,
       telegram_username: profile?.telegram_username,
       full_name: profile?.full_name || user.user_metadata?.full_name,
       avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url,
-      gender: profile?.gender || null,
+      gender: profile?.gender || null, // Пол обязателен для доступа к приложению
     };
   } catch (error) {
     console.error('Error getting current user:', error);
@@ -147,17 +148,32 @@ export const signUpWithEmail = async (
       return { success: false, error: 'Gender is required for registration' };
     }
 
+    // Ищем существующий профиль по email (основной логический ключ для связывания аккаунтов)
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id, email, gender')
+      .eq('email', email.toLowerCase().trim()) // email как логический ключ
+      .single();
+
+    let profileId = String(data.user.id); // UUID из Supabase Auth
+
+    // Если профиль с таким email уже существует, используем его ID
+    if (existingProfile && existingProfile.id) {
+      profileId = String(existingProfile.id);
+      console.log('ℹ️ Found existing profile by email, linking accounts:', profileId);
+    }
+
     // Создаем или обновляем профиль пользователя
     // Примечание: Триггер handle_new_user может уже создать профиль автоматически,
     // поэтому используем upsert для обновления существующего или создания нового
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
-        id: data.user.id, // Используем UUID из Supabase Auth
-        email: email,
+        id: String(profileId), // Используем существующий UUID если найден по email, иначе новый (UUID как строка)
+        email: email.toLowerCase().trim(), // email как основной логический ключ для связывания аккаунтов
         full_name: fullName || null,
-        gender: gender, // Поле gender обязательное при регистрации
-        created_at: new Date().toISOString(),
+        gender: existingProfile?.gender || gender, // Сохраняем существующий gender или используем новый
+        created_at: existingProfile?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
@@ -197,9 +213,10 @@ export const signUpWithEmail = async (
     return {
       success: true,
       user: {
-        id: data.user.id,
-        email: data.user.email,
+        id: String(profileId), // Используем ID найденного или созданного профиля (UUID как строка)
+        email: email.toLowerCase().trim(), // email как основной логический ключ
         full_name: fullName,
+        gender: existingProfile?.gender || gender, // Возвращаем gender
       },
     };
   } catch (error) {
@@ -237,8 +254,19 @@ export const signInWithEmail = async (
   }
 
   try {
+    // Нормализуем email для поиска (приводим к нижнему регистру и убираем пробелы)
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Ищем существующий профиль по email (основной логический ключ)
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id, email, gender')
+      .eq('email', normalizedEmail)
+      .single();
+
+    // Входим через Supabase Auth
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: normalizedEmail,
       password,
     });
 
@@ -248,6 +276,13 @@ export const signInWithEmail = async (
 
     if (!data.user) {
       return { success: false, error: 'Sign in failed' };
+    }
+
+    // Если найден существующий профиль, убеждаемся что auth.users.id совпадает
+    // Если нет - создаем связь
+    if (existingProfile && String(existingProfile.id) !== String(data.user.id)) {
+      console.warn('⚠️ Profile ID mismatch. Linking accounts...');
+      // В будущем здесь можно добавить логику связывания аккаунтов
     }
 
     const user = await getCurrentUser();
@@ -305,8 +340,19 @@ export const verifyPhoneOTP = async (
   }
 
   try {
+    // Нормализуем phone (убираем пробелы и символы форматирования)
+    const normalizedPhone = phone.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+
+    // Ищем существующий профиль по phone (логический ключ для Phone авторизации)
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id, phone, email, gender')
+      .eq('phone', normalizedPhone)
+      .single();
+
+    // Подтверждаем OTP
     const { data, error } = await supabase.auth.verifyOtp({
-      phone,
+      phone: normalizedPhone,
       token,
       type: 'sms',
     });
@@ -319,14 +365,24 @@ export const verifyPhoneOTP = async (
       return { success: false, error: 'Verification failed' };
     }
 
+    let profileId = String(data.user.id); // UUID из Supabase Auth
+
+    // Если профиль с таким phone уже существует, используем его ID
+    if (existingProfile && existingProfile.id) {
+      profileId = String(existingProfile.id);
+      console.log('ℹ️ Found existing profile by phone, linking accounts:', profileId);
+    }
+
     // Создаем или обновляем профиль пользователя
+    // Поле gender остается null - пользователь должен выбрать его позже
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
-        id: data.user.id,
-        phone: phone,
-        gender: null, // Поле gender необязательное
-        created_at: new Date().toISOString(),
+        id: String(profileId), // Используем существующий UUID если найден по phone, иначе новый (UUID как строка)
+        phone: normalizedPhone,
+        email: existingProfile?.email || null, // Сохраняем email если есть в существующем профиле
+        gender: existingProfile?.gender || null, // Сохраняем существующий gender или null
+        created_at: existingProfile?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
@@ -372,55 +428,75 @@ export const signInWithTelegram = async (
   }
 
   try {
-    // Проверяем, существует ли уже пользователь с таким telegram_id
-    const { data: existingProfile } = await supabase
+    // Архитектура единого аккаунта: ищем существующий профиль по email (основной ключ)
+    // Если email нет в initData, проверяем по telegram_id
+    // Это позволяет связывать аккаунты Google/Apple в будущем
+
+    // Пробуем получить email из initData (если есть)
+    // В будущем можно добавить парсинг initData для получения email
+    let userEmail: string | null = null;
+    
+    // Сначала проверяем по telegram_id (быстрая проверка для существующих пользователей Telegram)
+    const { data: existingProfileByTelegramId } = await supabase
       .from('profiles')
-      .select('id, telegram_id')
+      .select('id, email, phone, telegram_id, gender')
       .eq('telegram_id', telegramUser.id)
       .single();
 
-    if (existingProfile) {
-      // Пользователь существует, входим через его аккаунт
-      // Нужно получить сессию для существующего пользователя
-      // Для этого используем специальный метод или создаем сессию через service role
-      // В данном случае мы обновляем профиль и возвращаем данные
+    if (existingProfileByTelegramId && existingProfileByTelegramId.id) {
+      // Пользователь существует по telegram_id
+      console.log('ℹ️ Found existing profile by telegram_id, updating...');
+      
+      const profileId = String(existingProfileByTelegramId.id);
+      
+      // Обновляем профиль с актуальными данными Telegram
       await supabase
         .from('profiles')
         .update({
           telegram_username: telegramUser.username || null,
-          full_name: telegramUser.first_name || null,
+          full_name: telegramUser.first_name || existingProfileByTelegramId.full_name || null,
           avatar_url: telegramUser.photo_url || null,
           last_seen: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
-        .eq('id', existingProfile.id);
+        .eq('id', String(profileId)); // Приводим UUID к строке для избежания ошибок типов
 
-      // Здесь нужно авторизовать пользователя через Supabase Auth
-      // Для этого создаем magic link или используем другой метод
-      // Временно возвращаем профиль (реальная авторизация требует backend)
+      // Возвращаем существующий профиль
       const user = await getCurrentUser();
       return {
         success: true,
         user: {
-          id: existingProfile.id,
+          id: String(profileId), // UUID всегда строка
+          email: existingProfileByTelegramId.email || undefined,
+          phone: existingProfileByTelegramId.phone || undefined,
           telegram_id: telegramUser.id,
           telegram_username: telegramUser.username,
-          full_name: telegramUser.first_name,
+          full_name: telegramUser.first_name || existingProfileByTelegramId.full_name,
           avatar_url: telegramUser.photo_url,
-          gender: existingProfile.gender || null, // Возвращаем gender из профиля
-          ...user,
+          gender: existingProfileByTelegramId.gender || null, // Возвращаем gender из профиля
         },
       };
+    }
+
+    // Если профиль по telegram_id не найден, создаем новый
+    // Используем временный email на основе telegram_id (для будущего связывания аккаунтов)
+    // В будущем можно будет связать этот аккаунт с Google/Apple через email
+    const tempEmail = `telegram_${telegramUser.id}@telegram.local`;
+    
+    // Проверяем, нет ли профиля с таким временным email (на случай повторной регистрации)
+    const { data: existingProfileByEmail } = await supabase
+      .from('profiles')
+      .select('id, email, phone, gender')
+      .eq('email', tempEmail)
+      .single();
+
+    let profileId: string;
+    if (existingProfileByEmail && existingProfileByEmail.id) {
+      // Профиль с таким временным email уже существует, обновляем его
+      profileId = String(existingProfileByEmail.id);
+      console.log('ℹ️ Found existing profile by temp email, linking telegram account:', profileId);
     } else {
-      // Новый пользователь, создаем аккаунт
-      // Используем email на основе telegram_id (временный)
-      const tempEmail = `telegram_${telegramUser.id}@telegram.local`;
-      
-      // Создаем пользователя через Supabase Auth (с временным паролем или без)
-      // Для Telegram нужно использовать специальный flow
-      // Временно создаем профиль напрямую (для полной реализации нужен backend)
-      
-      // Альтернативный подход: создаем пользователя через email с временным паролем
+      // Создаем нового пользователя через Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: tempEmail,
         password: crypto.randomUUID(), // Временный пароль, не используется
@@ -438,51 +514,55 @@ export const signInWithTelegram = async (
         return { success: false, error: authError?.message || 'User creation failed' };
       }
 
-      // Создаем профиль пользователя
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert({
-          id: authData.user.id,
-          telegram_id: telegramUser.id,
-          telegram_username: telegramUser.username || null,
-          full_name: telegramUser.first_name || null,
-          avatar_url: telegramUser.photo_url || null,
-          gender: null, // Поле gender необязательное, можно указать позже в профиле
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }, {
-          onConflict: 'id',
-        });
-
-      if (profileError) {
-        console.error('❌ Error creating profile (telegram):', profileError);
-        console.error('  Code:', profileError.code);
-        console.error('  Message:', profileError.message);
-        console.error('  Details:', profileError.details);
-        
-        let errorMessage = 'Profile creation failed';
-        if (profileError.message) {
-          errorMessage = profileError.message;
-        }
-        
-        return { success: false, error: errorMessage };
-      }
-
-      // Загружаем созданный профиль для получения gender
-      const createdUser = await getCurrentUser();
-      
-      return {
-        success: true,
-        user: {
-          id: authData.user.id,
-          telegram_id: telegramUser.id,
-          telegram_username: telegramUser.username,
-          full_name: telegramUser.first_name,
-          avatar_url: telegramUser.photo_url,
-          gender: createdUser?.gender || null, // gender будет null для нового пользователя
-        },
-      };
+      profileId = String(authData.user.id);
     }
+
+    // Создаем или обновляем профиль пользователя
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: String(profileId), // Используем существующий UUID если найден по email, иначе новый (UUID как строка)
+        email: tempEmail, // Временный email для будущего связывания аккаунтов (Google, Apple)
+        telegram_id: telegramUser.id,
+        telegram_username: telegramUser.username || null,
+        full_name: telegramUser.first_name || null,
+        avatar_url: telegramUser.photo_url || null,
+        gender: existingProfileByEmail?.gender || null, // Сохраняем существующий gender или null (пользователь должен выбрать позже)
+        created_at: existingProfileByEmail?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'id',
+      });
+
+    if (profileError) {
+      console.error('❌ Error creating profile (telegram):', profileError);
+      console.error('  Code:', profileError.code);
+      console.error('  Message:', profileError.message);
+      console.error('  Details:', profileError.details);
+      
+      let errorMessage = 'Profile creation failed';
+      if (profileError.message) {
+        errorMessage = profileError.message;
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+
+    // Загружаем созданный/обновленный профиль
+    const createdUser = await getCurrentUser();
+    
+    return {
+      success: true,
+      user: {
+        id: String(profileId), // UUID всегда строка
+        email: tempEmail, // Временный email для будущего связывания аккаунтов
+        telegram_id: telegramUser.id,
+        telegram_username: telegramUser.username,
+        full_name: telegramUser.first_name,
+        avatar_url: telegramUser.photo_url,
+        gender: createdUser?.gender || null, // gender будет null для нового пользователя (обязательно выбрать позже)
+      },
+    };
   } catch (error) {
     console.error('Error signing in with Telegram:', error);
     return {
@@ -520,11 +600,13 @@ export const linkTelegramAccount = async (
       .eq('telegram_id', telegramUser.id)
       .single();
 
-    if (existingProfile && existingProfile.id !== currentUser.id) {
+    // Сравнение UUID (строки): приводим к строкам для надежности
+    if (existingProfile && String(existingProfile.id) !== String(currentUser.id)) {
       return { success: false, error: 'Telegram account already linked to another user' };
     }
 
     // Обновляем профиль пользователя, добавляя Telegram данные
+    // Приводим UUID к строке для избежания ошибок типов
     const { error } = await supabase
       .from('profiles')
       .update({
@@ -534,7 +616,7 @@ export const linkTelegramAccount = async (
         avatar_url: currentUser.avatar_url || telegramUser.photo_url || null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', currentUser.id);
+      .eq('id', String(currentUser.id)); // Приводим UUID к строке
 
     if (error) {
       return { success: false, error: error.message };
@@ -667,7 +749,7 @@ export const updateUserGender = async (
         gender: gender,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', userId);
+      .eq('id', String(userId)); // Приводим UUID к строке для избежания ошибок типов
 
     if (error) {
       console.error('❌ Error updating gender:', error);
