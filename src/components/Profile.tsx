@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search } from 'lucide-react';
+import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search, Settings, Bell, Globe, LogOut, User } from 'lucide-react';
 import WebApp from '@twa-dev/sdk';
 import { getSmartIcon } from '../lib/smartIcon';
 import { notifyFriendAdded } from '../lib/notifications';
@@ -75,6 +75,9 @@ const Profile: React.FC = () => {
   const [searchResults, setSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]);
   const [globalSearchResults, setGlobalSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]); // Результаты глобального поиска
   const [isSearching, setIsSearching] = useState(false);
+  const [showSettings, setShowSettings] = useState(false); // Модальное окно настроек
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true); // Уведомления вкл/выкл
+  const [language, setLanguage] = useState<'ru' | 'en'>('ru'); // Язык интерфейса
 
   // Загрузка профиля из базы данных
   // Обновление last_seen при активности пользователя
@@ -1383,6 +1386,30 @@ const Profile: React.FC = () => {
               {isSaving ? 'Saving...' : 'Save'}
             </button>
 
+            {/* Настройки button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowSettings(true);
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                  try {
+                    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                  } catch (e) {
+                    console.warn('Haptic error:', e);
+                  }
+                }
+              }}
+              className="mt-2 w-full rounded-2xl bg-white/5 border border-white/20 py-3 text-sm font-medium tracking-wide text-white/90 hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
+            >
+              <Settings size={18} className="text-white/70" />
+              <span>
+                {(() => {
+                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                  return isRussian ? 'Настройки' : 'Settings';
+                })()}
+              </span>
+            </button>
+
             {/* Footnote */}
             <p className="mt-1 text-[10px] text-center text-white/40 leading-snug">
               Your profile is saved to Supabase database.
@@ -2573,6 +2600,193 @@ const Profile: React.FC = () => {
                     ))}
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Модальное окно настроек */}
+      <AnimatePresence>
+        {showSettings && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSettings(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[1990]"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 rounded-3xl border border-white/20 p-6 z-[1991] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              {/* Заголовок */}
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-light text-white">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Настройки' : 'Settings';
+                  })()}
+                </h2>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+
+              {/* Раздел: Редактирование профиля */}
+              <div className="space-y-4 mb-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <User size={18} className="text-white/70" />
+                  <h3 className="text-sm font-medium text-white/90">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Редактирование профиля' : 'Edit Profile';
+                    })()}
+                  </h3>
+                </div>
+                <p className="text-xs text-white/50 ml-8">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Имя и аватар можно изменить в основном профиле' : 'Name and avatar can be changed in the main profile';
+                  })()}
+                </p>
+              </div>
+
+              {/* Раздел: Уведомления */}
+              <div className="space-y-4 mb-6 pb-6 border-b border-white/10">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Bell size={18} className="text-white/70" />
+                    <div>
+                      <h3 className="text-sm font-medium text-white/90">
+                        {(() => {
+                          const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                          return isRussian ? 'Уведомления' : 'Notifications';
+                        })()}
+                      </h3>
+                      <p className="text-xs text-white/50 mt-0.5">
+                        {(() => {
+                          const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                          return isRussian ? 'Получать уведомления о событиях' : 'Receive event notifications';
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setNotificationsEnabled(!notificationsEnabled);
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center ${
+                      notificationsEnabled ? 'bg-purple-500' : 'bg-white/20'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                        notificationsEnabled ? 'translate-x-6' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Раздел: Язык */}
+              <div className="space-y-4 mb-6 pb-6 border-b border-white/10">
+                <div className="flex items-center gap-3 mb-3">
+                  <Globe size={18} className="text-white/70" />
+                  <h3 className="text-sm font-medium text-white/90">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Язык интерфейса' : 'Interface Language';
+                    })()}
+                  </h3>
+                </div>
+                <div className="flex gap-2 ml-8">
+                  <button
+                    onClick={() => {
+                      setLanguage('ru');
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                      language === 'ru'
+                        ? 'bg-purple-500 text-white'
+                        : 'bg-white/5 text-white/60 hover:bg-white/10'
+                    }`}
+                  >
+                    Русский
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLanguage('en');
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                      language === 'en'
+                        ? 'bg-purple-500 text-white'
+                        : 'bg-white/5 text-white/60 hover:bg-white/10'
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+
+              {/* Раздел: Выйти из аккаунта */}
+              <div className="space-y-4">
+                <button
+                  onClick={async () => {
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('heavy');
+                      } catch (e) {
+                        console.warn('Haptic error:', e);
+                      }
+                    }
+                    // Выход из аккаунта
+                    if (window.Telegram?.WebApp) {
+                      window.Telegram.WebApp.close();
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-colors"
+                >
+                  <LogOut size={18} />
+                  <span className="text-sm font-medium">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Выйти из аккаунта' : 'Log Out';
+                    })()}
+                  </span>
+                </button>
               </div>
             </motion.div>
           </>

@@ -164,6 +164,9 @@ function App() {
   const [userLastSeen, setUserLastSeen] = useState<string | null>(null); // last_seen пользователя
   const heroCardRef = useRef<HTMLDivElement>(null); // Ref для Hero-карточки для отслеживания скролла
   const friendsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска друзей
+  const [showEventsFeed, setShowEventsFeed] = useState(false); // Показать раздел "Ближайшие события"
+  const [eventsSearchQuery, setEventsSearchQuery] = useState(''); // Поиск по событиям в разделе "Ближайшие события"
+  const eventsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска событий
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -351,42 +354,7 @@ function App() {
     return categoryTemplates[randomIndex].title_template;
   };
 
-  // Обработка изменения поискового запроса с умным выбором шаблона
-  useEffect(() => {
-    if (searchQuery.trim().length >= 2) {
-      const detectedCategory = detectCategoryFromText(searchQuery);
-      if (detectedCategory) {
-        setHighlightedCategory(detectedCategory);
-        
-        // Умный выбор: если пользователь еще не ввел заголовок вручную и шаблоны загружены
-        if (!isManualTitle && eventTemplates.length > 0 && step === 'category') {
-          const generatedTitle = generateAutoTitle(detectedCategory, searchQuery);
-          if (generatedTitle) {
-            setAutoTitle(generatedTitle);
-            setMessageContent(generatedTitle);
-            setTitleGenerated(true);
-            setIsManualTitle(false);
-            // Визуальный эффект мерцания
-            setTitleFlash(true);
-            setTimeout(() => setTitleFlash(false), 1000);
-          }
-        }
-        
-        // Haptic feedback при автоматическом подборе
-        if (window.Telegram?.WebApp?.HapticFeedback) {
-          try {
-            window.Telegram.WebApp.HapticFeedback.selectionChanged();
-          } catch (e) {
-            console.warn('Haptic error:', e);
-          }
-        }
-      } else {
-        setHighlightedCategory(null);
-      }
-    } else {
-      setHighlightedCategory(null);
-    }
-  }, [searchQuery, eventTemplates, isManualTitle, step]);
+  // Удалено: обработка поискового запроса (поиск теперь только в разделе "Ближайшие события")
 
   // Функция расчета расстояния между двумя точками (Haversine formula)
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
@@ -695,7 +663,7 @@ function App() {
     
     // Генерируем автоматический заголовок только если пользователь еще не ввел его вручную
     if (!isManualTitle) {
-      const generatedTitle = generateAutoTitle(id, searchQuery);
+      const generatedTitle = generateAutoTitle(id, ''); // Поиск удален, передаем пустую строку
       if (generatedTitle) {
         setAutoTitle(generatedTitle);
         setMessageContent(generatedTitle); // Автоматически заполняем поле
@@ -705,12 +673,11 @@ function App() {
         setTitleFlash(true);
         setTimeout(() => setTitleFlash(false), 1000);
       } else {
-        setMessageContent(searchQuery || ''); // Используем текст из поиска как описание
+        setMessageContent(''); // Очищаем поле
         setTitleGenerated(false);
       }
     }
     
-    setSearchQuery(''); // Очищаем поиск
     setHighlightedCategory(null);
     setEventAddress('');
     setEventCoords(null);
@@ -1219,14 +1186,13 @@ function App() {
                   <UsersRound size={20} className="text-white" />
                 </button>
 
-                {/* Кнопка создания события - мягкая кнопка с градиентом */}
+                {/* Кнопка создания события - Glassmorphism стиль, как у остальных иконок */}
                 <motion.button
                   onClick={async () => {
                     await loadEventTemplates();
                     setModalOpen(true);
                     setStep('category');
                     setSelectedCategory(null);
-                    setSearchQuery('');
                     setHighlightedCategory(null);
                     if (window.Telegram?.WebApp?.HapticFeedback) {
                       try {
@@ -1238,12 +1204,9 @@ function App() {
                   }}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  className="w-11 h-11 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-purple-500/40 backdrop-blur-sm"
-                  style={{
-                    boxShadow: '0 4px 16px rgba(168, 85, 247, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1)',
-                  }}
+                  className="w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 bg-white/10 border border-white/20 backdrop-blur-sm"
                 >
-                  <PlusCircle size={22} className="text-white" strokeWidth={2.5} />
+                  <PlusCircle size={20} className="text-white" strokeWidth={2} />
                 </motion.button>
               </div>
             </motion.header>
@@ -1402,6 +1365,30 @@ function App() {
 
             {/* Лента 'Чуни' - остальные события с fade-in эффектом */}
             <section className="px-4 pb-20">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-light text-white/80">
+                  {isRussian ? 'Чуни' : 'Chuni'}
+                </h2>
+                {/* Кнопка открытия раздела "Ближайшие события" */}
+                {feed.length > 1 && (
+                  <button
+                    onClick={() => {
+                      setShowEventsFeed(true);
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className="text-xs text-white/60 hover:text-white/80 transition-colors flex items-center gap-1"
+                  >
+                    <Search size={14} />
+                    <span>{isRussian ? 'Все события' : 'All events'}</span>
+                  </button>
+                )}
+              </div>
               {isLoadingFeed ? (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -1627,27 +1614,13 @@ function App() {
                 <div className={`flex-1 h-1 rounded-full ${step === 'location' ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' : 'bg-white/20'}`} />
               </div>
 
-              {/* Шаг 0: Умный поиск и выбор категории */}
+              {/* Шаг 0: Выбор категории (поиск удален) */}
               {step === 'category' && (
                 <div className="space-y-4">
-                  {/* Поле поиска */}
-                  <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={20} />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={isRussian ? 'Что планируешь?' : 'What are you planning?'}
-                      className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
-                      autoFocus
-                    />
-                  </div>
-
                   {/* Сетка категорий */}
                   <div className="grid grid-cols-2 gap-3">
                     {categories.map((cat) => {
                       const categoryClass = `category-${cat.id}`;
-                      const isHighlighted = highlightedCategory === cat.id;
                       const isSelected = selectedCategory === cat.id;
                       
                       return (
@@ -1658,19 +1631,16 @@ function App() {
                           }}
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
-                          animate={isHighlighted ? { scale: 1.08 } : { scale: 1 }}
+                          animate={{ scale: 1 }}
                           transition={{ type: 'spring', stiffness: 300, damping: 20 }}
                           className={`relative p-4 rounded-2xl flex flex-col items-center justify-center gap-3 glass-card hover:bg-black/40 transition-all duration-300 ${
-                            isSelected ? 'border-2 border-white/50' : isHighlighted ? 'border-2 border-purple-400/50' : 'border border-white/20'
+                            isSelected ? 'border-2 border-white/50' : 'border border-white/20'
                           }`}
-                          style={{
-                            boxShadow: isHighlighted ? '0 0 20px rgba(168, 85, 247, 0.4)' : undefined,
-                          }}
                         >
                           <motion.div 
-                            className={`category-ring ${categoryClass} ${isSelected || isHighlighted ? 'active' : ''}`}
-                            animate={isHighlighted ? { scale: 1.15, rotate: [0, 5, -5, 0] } : { scale: 1, rotate: 0 }}
-                            transition={{ duration: 0.5, repeat: isHighlighted ? Infinity : 0, repeatType: 'reverse' }}
+                            className={`category-ring ${categoryClass} ${isSelected ? 'active' : ''}`}
+                            animate={{ scale: 1, rotate: 0 }}
+                            transition={{ duration: 0.5 }}
                           >
                             <div className="category-icon-wrapper">
                               <cat.icon size={28} className="text-white/80" />
@@ -1679,15 +1649,6 @@ function App() {
                           <span className="text-sm font-light tracking-wide text-white text-center">
                             {isRussian ? cat.label.ru : cat.label.en}
                           </span>
-                          {isHighlighted && !isSelected && (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center"
-                            >
-                              <span className="text-xs">✨</span>
-                            </motion.div>
-                          )}
                         </motion.button>
                       );
                     })}
@@ -2106,6 +2067,202 @@ function App() {
                   </>
                 )}
               </button>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Модальное окно раздела "Ближайшие события" */}
+      <AnimatePresence>
+        {showEventsFeed && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowEventsFeed(false);
+                setEventsSearchQuery('');
+              }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[1990]"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-0 bottom-0 top-12 rounded-t-3xl border-t border-white/20 z-[1991] overflow-hidden"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              {/* Заголовок */}
+              <div className="flex items-center justify-between p-4 border-b border-white/10">
+                <h2 className="text-xl font-light text-white">
+                  {isRussian ? 'Ближайшие события' : 'Nearby Events'}
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowEventsFeed(false);
+                    setEventsSearchQuery('');
+                  }}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+
+              {/* Поле поиска событий */}
+              <div className="p-4 border-b border-white/10">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                  <input
+                    ref={eventsSearchInputRef}
+                    type="text"
+                    value={eventsSearchQuery}
+                    onChange={(e) => setEventsSearchQuery(e.target.value)}
+                    placeholder={isRussian ? 'Поиск по событиям...' : 'Search events...'}
+                    className="w-full pl-12 pr-4 py-3 rounded-2xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Фокус на поле поиска при клике
+                      if (eventsSearchInputRef.current) {
+                        eventsSearchInputRef.current.focus();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Лента событий с фильтрацией и сортировкой по расстоянию */}
+              <div className="flex-1 overflow-y-auto px-4 py-4">
+                {isLoadingFeed ? (
+                  <div className="flex justify-center items-center py-12">
+                    <div className="text-white/40 text-sm">{isRussian ? 'Загрузка...' : 'Loading...'}</div>
+                  </div>
+                ) : (() => {
+                  // Фильтрация событий по поисковому запросу
+                  const filteredFeed = eventsSearchQuery.trim() 
+                    ? feed.filter(impulse => {
+                        const query = eventsSearchQuery.toLowerCase();
+                        const matchesContent = impulse.content.toLowerCase().includes(query);
+                        const matchesCategory = impulse.category.toLowerCase().includes(query);
+                        return matchesContent || matchesCategory;
+                      })
+                    : feed;
+
+                  // Сортировка по расстоянию (ближайшие первыми)
+                  const sortedFeed = [...filteredFeed].sort((a, b) => {
+                    if (a.distance === undefined || a.distance === Infinity) return 1;
+                    if (b.distance === undefined || b.distance === Infinity) return -1;
+                    return a.distance - b.distance;
+                  });
+
+                  return sortedFeed.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <span className="text-4xl mb-3">🔍</span>
+                      <p className="text-white/40 text-sm mb-2">
+                        {isRussian ? 'События не найдены' : 'No events found'}
+                      </p>
+                      <p className="text-white/20 text-xs">
+                        {isRussian ? 'Попробуйте изменить поисковый запрос' : 'Try changing your search query'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {sortedFeed.map((impulse, index) => (
+                        <motion.div
+                          key={impulse.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ 
+                            duration: 0.4, 
+                            delay: index * 0.05,
+                            ease: 'easeOut' 
+                          }}
+                          onClick={() => {
+                            setSelectedEventDetail(impulse);
+                            if (window.Telegram?.WebApp?.HapticFeedback) {
+                              try {
+                                window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                              } catch (e) {
+                                console.warn('Haptic error:', e);
+                              }
+                            }
+                          }}
+                          className="rounded-2xl p-4 overflow-hidden cursor-pointer hover:bg-white/5 transition-colors"
+                          style={{
+                            backgroundColor: 'rgba(18, 18, 18, 0.6)',
+                            backdropFilter: 'blur(15px)',
+                            WebkitBackdropFilter: 'blur(15px)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                          }}
+                        >
+                          <div className="flex items-start gap-3">
+                            {/* Аватар автора */}
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (impulse.creator_id) {
+                                  handleUserProfileClick(
+                                    impulse.creator_id,
+                                    impulse.author_name,
+                                    impulse.author_avatar,
+                                    undefined
+                                  );
+                                }
+                              }}
+                              className="flex-shrink-0 cursor-pointer"
+                            >
+                              {impulse.author_avatar ? (
+                                <img 
+                                  src={impulse.author_avatar} 
+                                  alt={impulse.author_name || 'User'}
+                                  className="w-10 h-10 rounded-full object-cover border-2 border-white/20"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                                  {(impulse.author_name || 'A')[0].toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Контент события */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-lg">{getSmartIcon(impulse.content, impulse.category).emoji}</span>
+                                <span className="text-sm font-bold text-white">
+                                  {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
+                                </span>
+                              </div>
+                              
+                              <p className="text-sm text-white/90 mb-2 line-clamp-2">
+                                {impulse.content}
+                              </p>
+
+                              {/* Информация о времени и расстоянии */}
+                              <div className="flex flex-col gap-1 text-xs text-white/60">
+                                <div>{formatPublishedTime(impulse.created_at)}</div>
+                                {formatEventStartTime(impulse.event_date, impulse.event_time) && (
+                                  <div>{formatEventStartTime(impulse.event_date, impulse.event_time)}</div>
+                                )}
+                                {impulse.distance !== undefined && impulse.distance !== Infinity && (
+                                  <div className="flex items-center gap-1">
+                                    <MapPin size={12} />
+                                    <span>{formatDistance(impulse.distance)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
             </motion.div>
           </>
         )}
