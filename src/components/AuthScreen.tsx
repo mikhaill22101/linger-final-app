@@ -81,8 +81,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     try {
       let result;
       if (mode === 'register') {
-        console.log('🔄 Attempting registration with email:', email);
-        result = await signUpWithEmail(email, password, fullName);
+        console.log('🔄 Attempting registration with email:', email, 'gender:', gender);
+        if (!gender) {
+          setError(isRussian ? 'Пожалуйста, выберите пол' : 'Please select gender');
+          setIsLoading(false);
+          return;
+        }
+        result = await signUpWithEmail(email, password, fullName, gender);
         console.log('📝 Registration result:', result.success ? 'Success' : 'Failed', result.error || '');
       } else {
         console.log('🔄 Attempting login with email:', email);
@@ -323,37 +328,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
               {mode === 'register' && (
                 <div>
                   <label className="block text-white/70 text-sm mb-2">
-                    {isRussian ? 'Пол' : 'Gender'} <span className="text-red-400">*</span>
+                    {isRussian ? 'Пол' : 'Gender'}
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setGender('male')}
-                      className={`py-3 rounded-xl text-sm font-medium transition-all ${
+                      className={`py-3 rounded-xl text-base font-medium transition-all ${
                         gender === 'male'
                           ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
                           : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      {isRussian ? 'Мужчина' : 'Male'}
+                      {isRussian ? 'М' : 'M'}
                     </button>
                     <button
                       type="button"
                       onClick={() => setGender('female')}
-                      className={`py-3 rounded-xl text-sm font-medium transition-all ${
+                      className={`py-3 rounded-xl text-base font-medium transition-all ${
                         gender === 'female'
                           ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
                           : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      {isRussian ? 'Женщина' : 'Female'}
+                      {isRussian ? 'Ж' : 'F'}
                     </button>
                   </div>
-                  {!gender && (
-                    <p className="text-red-400/80 text-xs mt-1">
-                      {isRussian ? 'Пожалуйста, выберите пол' : 'Please select gender'}
-                    </p>
-                  )}
                 </div>
               )}
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Users, ArrowRight, Sparkles } from 'lucide-react';
+import WebApp from '@twa-dev/sdk';
 import { updateUserGender, getCurrentUser } from '../lib/auth-universal';
 import type { AuthUser } from '../lib/auth-universal';
 
@@ -35,12 +36,25 @@ export const CompleteProfileScreen: React.FC<CompleteProfileScreenProps> = ({ on
       const result = await updateUserGender(currentUser.id, gender);
       
       if (result.success) {
-        // Обновляем пользователя с новым полом
-        const updatedUser: AuthUser = {
-          ...currentUser,
-          gender: gender,
-        };
-        onComplete(updatedUser);
+        // Небольшая задержка для гарантии, что база данных успела обработать запрос
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Получаем обновленного пользователя из базы данных, чтобы убедиться, что gender сохранен
+        const updatedUserFromDb = await getCurrentUser();
+        
+        if (updatedUserFromDb && updatedUserFromDb.gender) {
+          // Пользователь успешно обновлен, gender сохранен в базе
+          console.log('✅ Gender successfully saved to database:', updatedUserFromDb.gender);
+          onComplete(updatedUserFromDb);
+        } else {
+          // Если getCurrentUser не вернул пользователя или gender, используем локальные данные
+          console.warn('⚠️ Could not fetch updated user from DB, using local data');
+          const updatedUser: AuthUser = {
+            ...currentUser,
+            gender: gender,
+          };
+          onComplete(updatedUser);
+        }
       } else {
         setError(result.error || (isRussian ? 'Ошибка сохранения' : 'Save error'));
         if (window.Telegram?.WebApp?.showAlert) {
@@ -98,37 +112,31 @@ export const CompleteProfileScreen: React.FC<CompleteProfileScreenProps> = ({ on
               <label className="block text-white/70 text-sm mb-3 flex items-center gap-2">
                 <Users size={16} />
                 <span>{isRussian ? 'Выберите пол' : 'Select Gender'}</span>
-                <span className="text-red-400">*</span>
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setGender('male')}
-                  className={`py-4 rounded-xl text-sm font-medium transition-all ${
+                  className={`py-4 rounded-xl text-base font-medium transition-all ${
                     gender === 'male'
                       ? 'bg-purple-500/30 text-white border-2 border-purple-400/50 shadow-lg shadow-purple-500/20'
                       : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white hover:border-purple-400/30'
                   }`}
                 >
-                  {isRussian ? 'Мужчина' : 'Male'}
+                  {isRussian ? 'М' : 'M'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setGender('female')}
-                  className={`py-4 rounded-xl text-sm font-medium transition-all ${
+                  className={`py-4 rounded-xl text-base font-medium transition-all ${
                     gender === 'female'
                       ? 'bg-purple-500/30 text-white border-2 border-purple-400/50 shadow-lg shadow-purple-500/20'
                       : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white hover:border-purple-400/30'
                   }`}
                 >
-                  {isRussian ? 'Женщина' : 'Female'}
+                  {isRussian ? 'Ж' : 'F'}
                 </button>
               </div>
-              {!gender && (
-                <p className="text-red-400/80 text-xs mt-2">
-                  {isRussian ? 'Пожалуйста, выберите пол для продолжения' : 'Please select gender to continue'}
-                </p>
-              )}
             </div>
 
             {/* Ошибка */}

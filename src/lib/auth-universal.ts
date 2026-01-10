@@ -166,13 +166,16 @@ export const signUpWithEmail = async (
     // Создаем или обновляем профиль пользователя
     // Примечание: Триггер handle_new_user может уже создать профиль автоматически,
     // поэтому используем upsert для обновления существующего или создания нового
+    // При регистрации всегда используем переданный gender (не сохраняем существующий, т.к. это новая регистрация)
+    const genderToSave = gender; // Используем переданный gender при регистрации
+    
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
         id: String(profileId), // Используем существующий UUID если найден по email, иначе новый (UUID как строка)
         email: email.toLowerCase().trim(), // email как основной логический ключ для связывания аккаунтов
         full_name: fullName || null,
-        gender: existingProfile?.gender || gender, // Сохраняем существующий gender или используем новый
+        gender: genderToSave, // Сохраняем переданный gender при регистрации
         created_at: existingProfile?.id ? undefined : new Date().toISOString(), // Не обновляем created_at для существующего профиля
         updated_at: new Date().toISOString(),
       }, {
@@ -210,13 +213,35 @@ export const signUpWithEmail = async (
       // Если профиль уже существует, продолжаем (это нормально при работе триггера)
     }
 
+    // Небольшая задержка для гарантии, что база данных успела обработать запрос
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Получаем обновленного пользователя из базы данных с полными данными
+    // Это гарантирует, что мы получим актуальный gender после сохранения
+    const updatedUser = await getCurrentUser();
+    
+    if (updatedUser) {
+      // Если getCurrentUser вернул пользователя, используем его данные
+      // Убеждаемся, что gender сохранен корректно (используем gender из базы данных)
+      console.log('✅ User profile saved successfully, gender from DB:', updatedUser.gender || genderToSave);
+      return {
+        success: true,
+        user: {
+          ...updatedUser,
+          gender: updatedUser.gender || genderToSave, // Используем gender из базы, если есть, иначе переданный
+        },
+      };
+    }
+
+    // Fallback: если getCurrentUser не вернул пользователя, создаем объект вручную
+    console.warn('⚠️ getCurrentUser did not return user, using fallback');
     return {
       success: true,
       user: {
         id: String(profileId), // Используем ID найденного или созданного профиля (UUID как строка)
         email: email.toLowerCase().trim(), // email как основной логический ключ
         full_name: fullName,
-        gender: existingProfile?.gender || gender, // Возвращаем gender
+        gender: genderToSave, // Возвращаем сохраненный gender
       },
     };
   } catch (error) {
