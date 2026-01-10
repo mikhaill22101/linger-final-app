@@ -157,17 +157,102 @@ function App() {
   const [friends, setFriends] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; location_lat?: number; location_lng?: number }>>([]); // Список друзей с координатами
   const [selectedEventDetail, setSelectedEventDetail] = useState<Impulse | null>(null); // Детальное окно события
   const [showCelebration, setShowCelebration] = useState(false); // Анимация празднования
+  const [userOnlineStatus, setUserOnlineStatus] = useState(false); // Статус онлайна пользователя
+  const [userLastSeen, setUserLastSeen] = useState<string | null>(null); // last_seen пользователя
+  const heroCardRef = useRef<HTMLDivElement>(null); // Ref для Hero-карточки для отслеживания скролла
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
-  // Загрузка данных пользователя для header
+  // Загрузка данных пользователя для header и проверка онлайн статуса
   useEffect(() => {
     const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
     if (tgUser) {
       setUserAvatar(tgUser.photo_url);
       setUserName(tgUser.first_name || tgUser.username || '');
     }
-  }, []);
+
+    // Загружаем профиль пользователя для проверки онлайн статуса
+    const loadUserProfile = async () => {
+      if (!isSupabaseConfigured || !tgUser?.id) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('last_seen')
+          .eq('telegram_id', tgUser.id)
+          .single();
+
+        if (!error && data) {
+          setUserLastSeen(data.last_seen);
+          
+          // Проверяем онлайн статус (last_seen менее 5 минут назад)
+          if (data.last_seen) {
+            const lastSeenDate = new Date(data.last_seen);
+            const now = new Date();
+            const diffMs = now.getTime() - lastSeenDate.getTime();
+            const diffMins = Math.floor(diffMs / 60000);
+            setUserOnlineStatus(diffMins >= 0 && diffMins < 5);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load user profile for online status:', err);
+      }
+    };
+
+    loadUserProfile();
+
+    // Обновляем last_seen каждые 2 минуты
+    const updateInterval = setInterval(async () => {
+      if (isSupabaseConfigured && tgUser?.id) {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ last_seen: new Date().toISOString() })
+            .eq('telegram_id', tgUser.id);
+          
+          setUserLastSeen(new Date().toISOString());
+          setUserOnlineStatus(true);
+        } catch (err) {
+          console.warn('Failed to update last_seen:', err);
+        }
+      }
+    }, 120000); // 2 минуты
+
+    return () => clearInterval(updateInterval);
+  }, [isSupabaseConfigured]);
+
+  // Haptic feedback при скролле мимо Hero-карточки
+  useEffect(() => {
+    if (!heroCardRef.current || feed.length === 0) return;
+
+    let hasTriggered = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting && entry.boundingClientRect.top < 0 && !hasTriggered) {
+            // Hero-карточка скрылась сверху - триггерим haptic feedback (только один раз)
+            hasTriggered = true;
+            if (window.Telegram?.WebApp?.HapticFeedback) {
+              try {
+                window.Telegram.WebApp.HapticFeedback.selectionChanged();
+              } catch (e) {
+                console.warn('Haptic error:', e);
+              }
+            }
+          }
+          // Сбрасываем флаг, когда карточка снова видна
+          if (entry.isIntersecting) {
+            hasTriggered = false;
+          }
+        });
+      },
+      { threshold: 0, rootMargin: '-100px 0px' }
+    );
+
+    observer.observe(heroCardRef.current);
+
+    return () => observer.disconnect();
+  }, [feed.length]); // Переподписываемся при изменении feed
 
   // Загрузка шаблонов заголовков из Supabase
   const loadEventTemplates = async () => {
@@ -870,6 +955,57 @@ function App() {
     return hours < 2;
   };
 
+  // Форматирование времени публикации события ("Опубликовано [X] мин/час назад")
+  const formatPublishedTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return isRussian ? 'Опубликовано только что' : 'Published just now';
+    if (minutes < 60) return isRussian ? `Опубликовано ${minutes} мин назад` : `Published ${minutes}m ago`;
+    if (hours < 24) return isRussian ? `Опубликовано ${hours} ч назад` : `Published ${hours}h ago`;
+    if (days < 7) return isRussian ? `Опубликовано ${days} дн назад` : `Published ${days}d ago`;
+    return isRussian 
+      ? `Опубликовано ${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`
+      : `Published ${date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}`;
+  };
+
+  // Форматирование времени начала события ("Начало в [Время]")
+  const formatEventStartTime = (eventDate?: string, eventTime?: string): string | null => {
+    if (!eventDate && !eventTime) return null;
+    
+    if (eventDate && eventTime) {
+      try {
+        const date = new Date(`${eventDate}T${eventTime}`);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const eventDateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+        if (eventDateOnly.getTime() === today.getTime()) {
+          return isRussian 
+            ? `Начало сегодня в ${eventTime}`
+            : `Starts today at ${eventTime}`;
+        } else {
+          return isRussian
+            ? `Начало ${date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${eventTime}`
+            : `Starts ${date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} at ${eventTime}`;
+        }
+      } catch (err) {
+        console.warn('Error parsing event date/time:', err);
+        return eventTime ? (isRussian ? `Начало в ${eventTime}` : `Starts at ${eventTime}`) : null;
+      }
+    }
+    
+    if (eventTime) {
+      return isRussian ? `Начало в ${eventTime}` : `Starts at ${eventTime}`;
+    }
+    
+    return null;
+  };
+
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -885,62 +1021,24 @@ function App() {
     return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
   };
 
-  // Форматирование даты и времени для карточек
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const eventDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-    if (eventDate.getTime() === today.getTime()) {
-      // Сегодня
-      return isRussian 
-        ? `Сегодня в ${date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`
-        : `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-    } else {
-      // Другая дата
-      return isRussian
-        ? date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleDateString('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
       <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'} relative`}>
         {activeTab === 'home' ? (
-          <>
-            {/* Карта на фоне */}
-            <div className="fixed inset-0 z-0">
-              <MapScreen 
-                key="background-map"
-                activeCategory={null}
-                refreshTrigger={mapRefreshTrigger}
-                isBackground={true}
-                onEventLongPress={async (impulse) => {
-                  // При длительном нажатии открываем детальное окно
-                  setSelectedEventDetail(impulse as Impulse);
-                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                    try {
-                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                    } catch (e) {
-                      console.warn('Haptic error:', e);
-                    }
-                  }
-                }}
-              />
-            </div>
-
-            {/* Контент поверх карты */}
-            <div className="relative z-10 bg-black/40 backdrop-blur-sm min-h-screen">
-            {/* Новый Header с аватаркой и кнопкой создания */}
-            <header className="sticky top-0 z-50 px-4 py-3 flex items-center justify-between backdrop-blur-xl border-b border-white/10"
+          <div className="relative min-h-screen bg-black">
+            {/* Soft Header - полностью прозрачный с размытием */}
+            <motion.header 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="sticky top-0 z-50 px-4 py-3 flex items-center justify-between"
               style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                backgroundColor: 'transparent',
+                backdropFilter: 'blur(20px)',
                 WebkitBackdropFilter: 'blur(20px)',
               }}
             >
-              {/* Аватарка пользователя слева с бейджем уведомлений */}
+              {/* Аватарка пользователя слева с кольцом если онлайн */}
               <button
                 onClick={() => {
                   setActiveTab('profile');
@@ -952,32 +1050,57 @@ function App() {
                     }
                   }
                 }}
-                className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-white/20 hover:border-white/40 transition-colors flex-shrink-0"
+                className="relative w-12 h-12 rounded-full overflow-hidden flex-shrink-0 group"
               >
                 {userAvatar ? (
-                  <img 
-                    src={userAvatar} 
-                    alt={userName || 'User'} 
-                    className="w-full h-full object-cover"
-                  />
+                  <>
+                    <img 
+                      src={userAvatar} 
+                      alt={userName || 'User'} 
+                      className="w-full h-full object-cover"
+                    />
+                    {/* Тонкое светящееся кольцо если онлайн */}
+                    {userOnlineStatus && (
+                      <div 
+                        className="absolute inset-0 rounded-full border-2 border-green-500"
+                        style={{
+                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.6), 0 0 0 2px rgba(34, 197, 94, 0.3)',
+                          animation: 'onlineRingPulse 2s ease-in-out infinite',
+                        }}
+                      />
+                    )}
+                  </>
                 ) : (
-                  <div className="w-full h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                  <div className="w-full h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-base font-bold">
                     {(userName || 'U')[0].toUpperCase()}
+                    {userOnlineStatus && (
+                      <div 
+                        className="absolute inset-0 rounded-full border-2 border-green-500"
+                        style={{
+                          boxShadow: '0 0 12px rgba(34, 197, 94, 0.6), 0 0 0 2px rgba(34, 197, 94, 0.3)',
+                          animation: 'onlineRingPulse 2s ease-in-out infinite',
+                        }}
+                      />
+                    )}
                   </div>
                 )}
                 
                 {/* Бейдж непрочитанных уведомлений */}
                 {unreadNotificationsCount > 0 && (
-                  <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 border-2 border-black flex items-center justify-center">
+                  <motion.div 
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 border-2 border-white flex items-center justify-center z-10"
+                  >
                     <span className="text-[10px] font-bold text-white">
                       {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
-                      </span>
-                    </div>
+                    </span>
+                  </motion.div>
                 )}
               </button>
 
               {/* Кнопки справа */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 {/* Кнопка просмотра друзей */}
                 <button
                   onClick={() => {
@@ -990,19 +1113,18 @@ function App() {
                       }
                     }
                   }}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg ${
+                  className={`w-10 h-10 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 ${
                     showFriendsMap 
-                      ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500' 
-                      : 'bg-white/10 border border-white/20'
+                      ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 shadow-lg shadow-purple-500/30' 
+                      : 'bg-white/10 border border-white/20 backdrop-blur-sm'
                   }`}
                 >
                   <UsersRound size={20} className="text-white" />
                 </button>
 
-                {/* Кнопка создания события */}
-                <button
+                {/* Кнопка создания события - мягкая кнопка с градиентом */}
+                <motion.button
                   onClick={async () => {
-                    // Загружаем шаблоны при открытии модального окна
                     await loadEventTemplates();
                     setModalOpen(true);
                     setStep('category');
@@ -1017,211 +1139,267 @@ function App() {
                       }
                     }
                   }}
-                  className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center hover:opacity-90 transition-opacity flex-shrink-0 shadow-lg shadow-purple-500/30"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-11 h-11 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-purple-500/40 backdrop-blur-sm"
+                  style={{
+                    boxShadow: '0 4px 16px rgba(168, 85, 247, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+                  }}
                 >
-                  <PlusCircle size={22} className="text-white" />
-                </button>
-                </div>
-            </header>
+                  <PlusCircle size={22} className="text-white" strokeWidth={2.5} />
+                </motion.button>
+              </div>
+            </motion.header>
 
-            {/* Лента активности */}
-            <section className="px-4 py-6">
-              {isLoadingFeed ? (
-                <div className="text-center py-8 text-white/40">
-                  {isRussian ? 'Загрузка...' : 'Loading...'}
-                </div>
-              ) : (() => {
-                // Показываем только одно ближайшее событие в топе ленты
-                // Кнопку "Создать событие" убрали - теперь она только в header (+)
-                if (feed.length === 0) {
-                  return (
-                    <div className="text-center py-8 text-white/40 text-sm">
-                      {isRussian ? 'Пока нет ближайших событий' : 'No nearest events yet'}
-                </div>
-                  );
-                }
+            {/* Интерактивная карта - "окно в мир" */}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4, ease: 'easeOut' }}
+              className="relative mx-4 mt-4 mb-6 rounded-[32px] overflow-hidden"
+              style={{
+                height: '40vh',
+                minHeight: '280px',
+                maxHeight: '400px',
+                boxShadow: 'inset 0 4px 20px rgba(0, 0, 0, 0.3), 0 8px 32px rgba(0, 0, 0, 0.4)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+              }}
+            >
+              <MapScreen 
+                key="window-map"
+                activeCategory={null}
+                refreshTrigger={mapRefreshTrigger}
+                isBackground={false}
+                maxEvents={4}
+                onEventLongPress={async (impulse) => {
+                  setSelectedEventDetail(impulse as Impulse);
+                  if (window.Telegram?.WebApp?.HapticFeedback) {
+                    try {
+                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                    } catch (e) {
+                      console.warn('Haptic error:', e);
+                    }
+                  }
+                }}
+              />
+            </motion.div>
 
-                // Показываем только самое ближайшее событие
-                const impulse = feed[0];
-                
-                // Форматируем дату события для компактного отображения
-                const eventDate = impulse.event_date ? new Date(impulse.event_date) : null;
-                const eventTime = impulse.event_time || '';
-                const dateTimeStr = eventDate 
-                  ? (() => {
-                      const now = new Date();
-                      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                      const eventDateOnly = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-                      
-                      if (eventDateOnly.getTime() === today.getTime()) {
-                        return isRussian 
-                          ? `Сегодня ${eventTime || ''}`.trim()
-                          : `Today ${eventTime || ''}`.trim();
-                      } else {
-                        return isRussian
-                          ? `${eventDate.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${eventTime || ''}`.trim()
-                          : `${eventDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })} ${eventTime || ''}`.trim();
+            {/* Hero-карточка "Твой идеальный план" */}
+            {!isLoadingFeed && feed.length > 0 && (
+              <motion.div
+                ref={heroCardRef}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.6, ease: 'easeOut' }}
+                className="mx-4 mb-6"
+              >
+                {/* Подпись над карточкой */}
+              <motion.p 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                  transition={{ delay: 0.7 }}
+                  className="text-xs font-medium text-white/60 mb-3 px-2"
+                >
+                  {isRussian 
+                    ? (feed[0].distance !== undefined && feed[0].distance !== Infinity && feed[0].distance < 1
+                        ? `Совсем рядом с тобой • ${Math.round(feed[0].distance * 1000)} метров`
+                        : 'Твой идеальный план на вечер')
+                    : (feed[0].distance !== undefined && feed[0].distance !== Infinity && feed[0].distance < 1
+                        ? `Right next to you • ${Math.round(feed[0].distance * 1000)} meters`
+                        : 'Your ideal plan for the evening')
+                  }
+              </motion.p>
+
+                {/* Hero-карточка события */}
+                <motion.div
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => {
+                    setSelectedEventDetail(feed[0]);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {
+                        console.warn('Haptic error:', e);
                       }
-                    })()
-                  : formatTime(impulse.created_at);
+                    }
+                  }}
+                  className="relative rounded-3xl p-5 cursor-pointer overflow-hidden"
+                  style={{
+                    backgroundColor: 'rgba(18, 18, 18, 0.8)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                  }}
+                >
+                  {/* Градиентный фон для категории */}
+                  <div 
+                    className="absolute inset-0 opacity-20"
+                    style={{
+                      background: `linear-gradient(135deg, ${categoryColors[feed[0].category] || '#6366f1'}40, ${categoryColors[feed[0].category] || '#a855f7'}20)`,
+                    }}
+                  />
 
-                return (
-                <div className="space-y-3">
-                  <AnimatePresence>
-                    {/* Самое ближайшее событие */}
+                  <div className="relative z-10 flex items-start gap-4">
+                    {/* Крупная иконка категории */}
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ delay: 0.8, type: 'spring', stiffness: 200 }}
+                      className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0 text-3xl"
+                      style={{
+                        backgroundColor: `${categoryColors[feed[0].category] || '#6366f1'}30`,
+                        border: `2px solid ${categoryColors[feed[0].category] || '#6366f1'}60`,
+                        boxShadow: `0 4px 16px ${categoryColors[feed[0].category] || '#6366f1'}40`,
+                      }}
+                    >
+                      {getSmartIcon(feed[0].content, feed[0].category).emoji}
+                    </motion.div>
+
+                    {/* Контент карточки */}
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-bold text-white mb-2 line-clamp-2">
+                        {feed[0].content}
+                      </h3>
+
+                      {/* Расстояние */}
+                      {feed[0].distance !== undefined && feed[0].distance !== Infinity && (
+                        <div className="flex items-center gap-2 mb-3">
+                          <MapPin size={14} className="text-white/60 flex-shrink-0" />
+                          <span className="text-sm text-white/70">
+                            {feed[0].distance < 1 
+                              ? `${Math.round(feed[0].distance * 1000)} метров`
+                              : `${feed[0].distance.toFixed(1)} км`
+                            }
+                      </span>
+                    </div>
+                      )}
+
+                      {/* Лица друзей (аватарки), если они туда идут */}
+                      {/* TODO: Добавить загрузку участников события из БД */}
+                      
+                      {/* Время начала события */}
+                      {feed[0].event_time && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <Clock size={14} className="text-white/60 flex-shrink-0" />
+                          <span className="text-sm text-white/70">
+                            {formatEventStartTime(feed[0].event_date, feed[0].event_time) || `Начало в ${feed[0].event_time}`}
+                    </span>
+                </div>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+
+            {/* Лента 'Чуни' - остальные события с fade-in эффектом */}
+            <section className="px-4 pb-20">
+              {isLoadingFeed ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-center py-8 text-white/40"
+                >
+                  {isRussian ? 'Загрузка...' : 'Loading...'}
+                </motion.div>
+              ) : feed.length === 0 ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-center py-8 text-white/40 text-sm"
+                >
+                  {isRussian ? 'Пока нет ближайших событий' : 'No nearest events yet'}
+                </motion.div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Показываем события начиная со второго (первое в Hero-карточке) */}
+                  {feed.slice(1).map((impulse, index) => (
                       <motion.div
                         key={impulse.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      className="compact-event-card relative"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                      transition={{ 
+                        duration: 0.5, 
+                        delay: 0.8 + index * 0.1, // Stagger анимация
+                        ease: 'easeOut' 
+                      }}
+                      whileInView={{ opacity: 1 }}
+                      viewport={{ once: true, margin: '-100px' }}
+                      className="rounded-2xl p-4 overflow-hidden"
+                      style={{
+                        backgroundColor: 'rgba(18, 18, 18, 0.6)',
+                        backdropFilter: 'blur(15px)',
+                        WebkitBackdropFilter: 'blur(15px)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                      }}
                     >
-                            {/* Индикатор новизны для событий < 2 часов */}
-                            {isNewEvent(impulse.created_at) && (
-                              <motion.div
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
-                                transition={{ duration: 2, repeat: Infinity }}
-                                className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 rounded-full flex items-center justify-center shadow-lg z-10"
-                              >
-                                <span className="text-[8px]">🔥</span>
-                              </motion.div>
-                            )}
-                            
-                            {/* Слева: Аватар + Имя (кликабельно) */}
-                            <div 
-                              className="flex items-center gap-3 flex-shrink-0 cursor-pointer"
-                              onClick={() => {
-                                if (impulse.creator_id) {
-                                  handleUserProfileClick(
-                                    impulse.creator_id,
-                                    impulse.author_name,
-                                    impulse.author_avatar,
-                                    undefined
-                                  );
-                                }
-                              }}
-                            >
-                              <div className="relative">
-                                {impulse.author_avatar ? (
-                                  <img 
-                                    src={impulse.author_avatar} 
-                                    alt={impulse.author_name || 'User'}
-                                    className="w-8 h-8 rounded-full object-cover border-2 border-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 p-[2px]"
-                                    style={{
-                                      borderImage: 'linear-gradient(135deg, #6366f1, #a855f7, #ec4899) 1',
-                                      boxShadow: '0 0 10px rgba(99, 102, 241, 0.5)',
-                                    }}
-                                  />
-                                ) : (
-                                  <div 
-                                    className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-xs font-bold"
-                                    style={{
-                                      boxShadow: '0 0 10px rgba(99, 102, 241, 0.5)',
-                                    }}
-                                  >
-                                    {(impulse.author_name || 'A')[0].toUpperCase()}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-bold text-white leading-tight truncate">
+                      <div className="flex items-start gap-3">
+                        {/* Аватар автора */}
+                        <div
+                          onClick={() => {
+                            if (impulse.creator_id) {
+                              handleUserProfileClick(
+                                impulse.creator_id,
+                                impulse.author_name,
+                                impulse.author_avatar,
+                                undefined
+                              );
+                            }
+                          }}
+                          className="flex-shrink-0 cursor-pointer"
+                        >
+                          {impulse.author_avatar ? (
+                            <img 
+                              src={impulse.author_avatar} 
+                              alt={impulse.author_name || 'User'}
+                              className="w-10 h-10 rounded-full object-cover border-2 border-white/20"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 flex items-center justify-center text-white text-sm font-bold">
+                              {(impulse.author_name || 'A')[0].toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Контент события */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-lg">{getSmartIcon(impulse.content, impulse.category).emoji}</span>
+                            <span className="text-sm font-bold text-white">
                               {impulse.author_name || (isRussian ? 'Аноним' : 'Anonymous')}
                             </span>
                           </div>
-                          </div>
-                            
-                            {/* Центр: Интеллектуальная иконка + Текст события (одна строка) */}
-                            <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
-                              <span className="text-sm flex-shrink-0">
-                                {getSmartIcon(impulse.content, impulse.category).emoji}
-                              </span>
-                              <p className="text-sm font-medium text-white/90 leading-tight flex-1 min-w-0 line-clamp-1">
+                          
+                          <p className="text-sm text-white/90 mb-2 line-clamp-2">
                           {impulse.content}
                         </p>
-                            </div>
-                            
-                            {/* Справа: Дата и дистанция */}
-                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                              {dateTimeStr && (
-                                <div className="flex items-center gap-1 text-[11px] text-white/60">
-                                  <Clock size={10} />
-                                  <span className="whitespace-nowrap">{dateTimeStr}</span>
-                          </div>
-                        )}
-                              {impulse.distance !== undefined && impulse.distance !== Infinity && (
-                                <div className="flex items-center gap-1 text-[11px] text-white/60">
-                                  <MapPin size={10} />
-                                  <span className="whitespace-nowrap">{formatDistance(impulse.distance)}</span>
-                          </div>
-                        )}
-                            </div>
-                      </motion.div>
-                  </AnimatePresence>
-                </div>
-                );
-              })()}
-            </section>
-            </div>
 
-            {/* Детальное окно события при длительном нажатии */}
-            <AnimatePresence>
-              {selectedEventDetail && (
-                <>
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={() => setSelectedEventDetail(null)}
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
-                  />
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                    onClick={(e) => e.stopPropagation()}
-                    className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
-                    style={{
-                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
-                      backdropFilter: 'blur(20px)',
-                      WebkitBackdropFilter: 'blur(20px)',
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xl font-light text-white">
-                        {selectedEventDetail.category}
-                      </h3>
-                      <button
-                        onClick={() => setSelectedEventDetail(null)}
-                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                      >
-                        <X size={20} className="text-white/60" />
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      <p className="text-white/90 leading-relaxed">
-                        {selectedEventDetail.content}
-                      </p>
-                      {selectedEventDetail.address && (
-                        <div className="flex items-start gap-2 text-white/70 text-sm">
-                          <MapPin size={16} className="mt-0.5 flex-shrink-0" />
-                          <span>{selectedEventDetail.address}</span>
+                          {/* Информация о времени и расстоянии */}
+                          <div className="flex flex-col gap-1 text-xs text-white/60">
+                            <div>{formatPublishedTime(impulse.created_at)}</div>
+                            {formatEventStartTime(impulse.event_date, impulse.event_time) && (
+                              <div>{formatEventStartTime(impulse.event_date, impulse.event_time)}</div>
+                            )}
+                            {impulse.distance !== undefined && impulse.distance !== Infinity && (
+                              <div className="flex items-center gap-1">
+                            <MapPin size={12} />
+                                <span>{formatDistance(impulse.distance)}</span>
+                          </div>
+                        )}
+                          </div>
                         </div>
-                      )}
-                      {selectedEventDetail.event_date && selectedEventDetail.event_time && (
-                        <div className="flex items-center gap-2 text-white/70 text-sm">
-                          <Clock size={16} />
-                          <span>
-                            {selectedEventDetail.event_date} в {selectedEventDetail.event_time}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                </>
+                      </div>
+                      </motion.div>
+                    ))}
+                </div>
               )}
-            </AnimatePresence>
-          </>
+            </section>
+          </div>
         ) : activeTab === 'profile' ? (
           <Profile />
         ) : (
@@ -1236,6 +1414,64 @@ function App() {
           />
         )}
       </div>
+
+      {/* Глобальное детальное окно события (работает на всех табах) */}
+      <AnimatePresence>
+        {selectedEventDetail && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedEventDetail(null)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 border border-white/20 rounded-3xl p-6 z-[2001] max-w-md mx-auto max-h-[90vh] overflow-y-auto"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-light text-white">
+                  {selectedEventDetail.category}
+                </h3>
+                <button
+                  onClick={() => setSelectedEventDetail(null)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-white/60" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <p className="text-white/90 leading-relaxed">
+                  {selectedEventDetail.content}
+                </p>
+                {selectedEventDetail.address && (
+                  <div className="flex items-start gap-2 text-white/70 text-sm">
+                    <MapPin size={16} className="mt-0.5 flex-shrink-0" />
+                    <span>{selectedEventDetail.address}</span>
+                  </div>
+                )}
+                {selectedEventDetail.event_date && selectedEventDetail.event_time && (
+                  <div className="flex items-center gap-2 text-white/70 text-sm">
+                    <Clock size={16} />
+                    <span>
+                      {selectedEventDetail.event_date} в {selectedEventDetail.event_time}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {modalOpen && (

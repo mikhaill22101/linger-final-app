@@ -238,6 +238,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
       id: row.id,
       content: row.content,
       category: row.category,
+      creator_id: row.creator_id,
       author_name: profilesMap.get(row.creator_id) || undefined,
       location_lat: row.location_lat as number,
       location_lng: row.location_lng as number,
@@ -276,9 +277,10 @@ interface MapScreenProps {
   showFriends?: boolean; // Режим отображения друзей
   friends?: Friend[]; // Список друзей для отображения
   onFriendsNearby?: (friendIds: number[]) => void; // Коллбэк когда друзья рядом
+  maxEvents?: number; // Максимальное количество событий для отображения (для главной страницы - 3-4)
 }
 
-const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress, showFriends = false, friends = [], onFriendsNearby }) => {
+const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, isSelectionMode, onLocationSelected, onEventSelected, onBack, isBackground = false, onEventLongPress, showFriends = false, friends = [], onFriendsNearby, maxEvents }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<MapInstance | null>(null);
   const [status, setStatus] = useState<MapStatus>('loading');
@@ -397,8 +399,10 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             
             // Отображаем маркеры БЫСТРО (без адресов)
             if (loadedImpulses.length > 0) {
-              // Рассчитываем близлежащие события
+              // Рассчитываем близлежащие события и ограничиваем количество для главной страницы
               let nearestEventId: number | undefined;
+              let eventsToShow = loadedImpulses;
+              
               if (currentUserLocation) {
                 const eventsWithDistance = loadedImpulses
                   .map(impulse => ({
@@ -410,13 +414,23 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                       impulse.location_lng
                     ),
                   }))
-                  .sort((a, b) => a.distance - b.distance)
-                  .slice(0, 3); // Только 3 ближайших
-                setNearbyEvents(eventsWithDistance);
-                nearestEventId = eventsWithDistance.length > 0 ? eventsWithDistance[0].id : undefined;
+                  .sort((a, b) => a.distance - b.distance);
+                
+                // Ограничиваем количество событий для отображения на карте (для главной страницы)
+                const limit = maxEvents || loadedImpulses.length;
+                const limitedEvents = eventsWithDistance.slice(0, limit);
+                setNearbyEvents(limitedEvents);
+                nearestEventId = limitedEvents.length > 0 ? limitedEvents[0].id : undefined;
+                
+                // Для карты-окна на главной странице показываем только ограниченное количество
+                if (maxEvents && maxEvents > 0) {
+                  eventsToShow = limitedEvents.map(({ distance, ...e }) => ({
+                    ...e,
+                  }));
+                }
               }
 
-              map.setMarkers(loadedImpulses, async (impulse) => {
+              map.setMarkers(eventsToShow, async (impulse) => {
                 // Загружаем адрес при клике, если его еще нет
                 let impulseWithAddress = impulse;
                 if (!impulse.address) {
@@ -510,7 +524,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         const loadedImpulses = await loadImpulses();
         setImpulses(loadedImpulses);
         
-        // Обновляем близлежащие события
+        // Обновляем близлежащие события с учетом лимита
         if (userLocation) {
           const eventsWithDistance = loadedImpulses
             .map(impulse => ({
@@ -522,16 +536,48 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
                 impulse.location_lng
               ),
             }))
-            .sort((a, b) => a.distance - b.distance)
-            .slice(0, 3);
-          setNearbyEvents(eventsWithDistance);
+            .sort((a, b) => a.distance - b.distance);
+          
+          const limit = maxEvents || 3;
+          const limitedEvents = eventsWithDistance.slice(0, limit);
+          setNearbyEvents(limitedEvents);
+          
+          // Обновляем маркеры на карте с учетом лимита
+          if (mapInstanceRef.current && maxEvents && maxEvents > 0) {
+            const eventsToShow = limitedEvents.map(e => ({
+              id: e.id,
+              content: e.content,
+              category: e.category,
+              creator_id: e.creator_id,
+              location_lat: e.location_lat,
+              location_lng: e.location_lng,
+              created_at: e.created_at,
+              address: e.address,
+              event_date: e.event_date,
+              event_time: e.event_time,
+            }));
+            
+            mapInstanceRef.current.setMarkers(eventsToShow, async (impulse) => {
+              // Логика обработки клика на маркер (уже обработана в основном обработчике выше)
+              if (onEventSelected) {
+                onEventSelected(impulse);
+              }
+            }, activeCategory || null, undefined, isBackground ? onEventLongPress : undefined);
+          }
         }
         
         if (mapInstanceRef.current && loadedImpulses.length > 0 && !isSelectionMode) {
           // Определяем ближайшее событие для анимации пульсации
           const nearestEventIdForRefresh = nearbyEvents.length > 0 ? nearbyEvents[0].id : undefined;
           
-          mapInstanceRef.current.setMarkers(loadedImpulses, async (impulse) => {
+          // Используем ограниченное количество событий, если задан maxEvents
+          const eventsToDisplay = maxEvents && maxEvents > 0 && nearbyEvents.length > 0
+            ? nearbyEvents.map(({ distance, ...e }) => ({
+                ...e,
+              }))
+            : loadedImpulses;
+          
+          mapInstanceRef.current.setMarkers(eventsToDisplay, async (impulse) => {
             let impulseWithAddress = impulse;
             if (!impulse.address) {
               const cacheKey = `${impulse.location_lat},${impulse.location_lng}`;
@@ -746,7 +792,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
                 setStatus('ready');
               }
-            } catch (e) {
+        } catch (e) {
               setStatus('error');
               setErrorMessage('Ошибка сети. Нажмите, чтобы попробовать снова');
             }
@@ -788,8 +834,8 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
   useEffect(() => {
     if (!showFriends || !userLocation || friends.length === 0) {
       nearbyFriendsRef.current.clear();
-            return;
-          }
+          return;
+        }
 
     const checkNearbyFriends = () => {
       const nearby: Set<number> = new Set();

@@ -10,6 +10,7 @@ export interface ImpulseLocation {
   id: number;
   content: string;
   category: string;
+  creator_id: number;
   author_name?: string;
   location_lat: number;
   location_lng: number;
