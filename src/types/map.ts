@@ -26,6 +26,7 @@ export interface MapInstance {
   setActiveCategory?: (category: string | null) => void;
   setUserLocation?: (location: GeoLocation | null) => void; // Установка локации пользователя
   flyTo: (location: GeoLocation, zoom?: number, duration?: number) => void;
+  setCenter: (location: GeoLocation, zoom?: number) => void; // Точное центрирование без анимации
   getBounds: () => { north: number; south: number; east: number; west: number } | null;
   invalidateSize?: () => void;
   setLocationSelectMode?: (enabled: boolean, onSelect: (location: GeoLocation) => void) => void;

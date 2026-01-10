@@ -75,6 +75,7 @@ const Profile: React.FC = () => {
   const [searchResults, setSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]);
   const [globalSearchResults, setGlobalSearchResults] = useState<Array<{ id: number; full_name?: string; avatar_url?: string; username?: string; isFriend?: boolean }>>([]); // Результаты глобального поиска
   const [isSearching, setIsSearching] = useState(false);
+  const [isEditingBio, setIsEditingBio] = useState(false); // Режим редактирования био
   const [showSettings, setShowSettings] = useState(false); // Модальное окно настроек
   const [notificationsEnabled, setNotificationsEnabled] = useState(true); // Уведомления вкл/выкл
   const [language, setLanguage] = useState<'ru' | 'en'>('ru'); // Язык интерфейса
@@ -547,7 +548,7 @@ const Profile: React.FC = () => {
     setProfile((prev) => ({ ...prev, bio: value }));
   };
 
-  const handleSave = async () => {
+  const handleSaveBio = async () => {
     if (!profile.telegramId) {
       console.error('Telegram ID is missing');
       return;
@@ -602,6 +603,8 @@ const Profile: React.FC = () => {
         WebApp.showAlert(errorMessage);
       } else {
         console.log('Profile saved successfully:', data);
+        // Закрываем режим редактирования после успешного сохранения
+        setIsEditingBio(false);
         // Optional: light haptic feedback when available
         try {
           tgWebApp?.HapticFeedback?.impactOccurred?.('light');
@@ -1365,26 +1368,66 @@ const Profile: React.FC = () => {
                 <p className="text-xs font-medium tracking-[0.2em] text-white/50 uppercase">
                   Bio
                 </p>
-                <span className="text-[10px] text-white/40">Share your vibe</span>
+                {!isEditingBio && (
+                  <button
+                    onClick={() => {
+                      setIsEditingBio(true);
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Изменить' : 'Edit';
+                    })()}
+                  </button>
+                )}
               </div>
 
+              {isEditingBio ? (
+                <>
               <textarea
                 value={profile.bio}
                 onChange={handleBioChange}
                 placeholder="Tell people what you are looking for in LINGER…"
                 className="w-full rounded-2xl bg-white/5 border border-indigo-400/40 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/40 text-sm text-white placeholder:text-white/35 resize-none min-h-[96px] px-3.5 py-3 leading-relaxed"
-              />
+                    autoFocus
+                  />
+                  {/* Save button - показывается только при редактировании */}
+                  <button
+                    type="button"
+                    onClick={handleSaveBio}
+                    disabled={isSaving || isLoading}
+                    className="w-full rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold tracking-wide text-white shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSaving ? (() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Сохранение...' : 'Saving...';
+                    })() : (() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Сохранить' : 'Save';
+                    })()}
+                  </button>
+                </>
+              ) : (
+                <div className="w-full rounded-2xl bg-white/5 border border-white/10 px-3.5 py-3 min-h-[96px] text-sm text-white/90 leading-relaxed">
+                  {profile.bio || (
+                    <span className="text-white/40 italic">
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Расскажи о себе...' : 'Tell people what you are looking for in LINGER…';
+                      })()}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-
-            {/* Save button */}
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || isLoading}
-              className="mt-1 w-full rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 text-sm font-semibold tracking-wide text-white shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
 
             {/* Настройки button */}
             <button

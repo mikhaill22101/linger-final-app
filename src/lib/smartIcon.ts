@@ -210,6 +210,8 @@ const categoryIcons: Record<string, string> = {
   'In Sync': '🎵',
   'Хобби': '❤️',
   'Hobby': '❤️',
+  'Близкие': '🤝',
+  'Nearby': '🤝',
 };
 
 /**

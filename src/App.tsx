@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search, Dice6 } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search, Dice6, Handshake } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -110,6 +110,17 @@ const categories = [
       ru: 'Джем-сейшн, рыбалка и общие увлечения', 
       en: 'Jam sessions, fishing and shared passions' 
     }
+  },
+  { 
+    id: 'nearby', 
+    icon: Handshake, 
+    label: { ru: 'Близкие', en: 'Nearby' }, 
+    color: 'from-amber-300/20 to-orange-400/20',
+    border: 'border-amber-400/30',
+    text: { 
+      ru: 'Помощь, обмен и соседские добрые дела', 
+      en: 'Help, swap and neighborhood kind vibes' 
+    }
   }
 ];
 
@@ -164,6 +175,7 @@ function App() {
   const [userLastSeen, setUserLastSeen] = useState<string | null>(null); // last_seen пользователя
   const heroCardRef = useRef<HTMLDivElement>(null); // Ref для Hero-карточки для отслеживания скролла
   const friendsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска друзей
+  const [showFriendsSearch, setShowFriendsSearch] = useState(false); // Показывать ли поле поиска в окне друзей
   const [showEventsFeed, setShowEventsFeed] = useState(false); // Показать раздел "Ближайшие события"
   const [eventsSearchQuery, setEventsSearchQuery] = useState(''); // Поиск по событиям в разделе "Ближайшие события"
   const eventsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска событий
@@ -313,6 +325,7 @@ function App() {
       'sync': ['ритме', 'музыка', 'танцы', 'клуб', 'диско', 'гитара', 'караоке', 'dj', 'концерт', 'петь'],
       'hobby': ['хобби', 'интересы', 'увлечения', 'отдых', 'расслабиться', 'чилаут', 'кино', 'фильм', 'сериал', 'кальян'],
       'impulse': ['спорт', 'тренировка', 'зал', 'бег', 'пробежка', 'футбол', 'баскетбол', 'волейбол', 'теннис', 'плавание'],
+      'nearby': ['близкие', 'помощь', 'обмен', 'сосед', 'добрые дела', 'помочь', 'обменяться', 'взаимопомощь', 'соседство', 'доброта'],
     };
     
     // Ищем совпадения
@@ -1363,14 +1376,11 @@ function App() {
               </motion.div>
             )}
 
-            {/* Лента 'Чуни' - остальные события с fade-in эффектом */}
+            {/* Лента событий - остальные события с fade-in эффектом */}
             <section className="px-4 pb-20">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-light text-white/80">
-                  {isRussian ? 'Чуни' : 'Chuni'}
-                </h2>
-                {/* Кнопка открытия раздела "Ближайшие события" */}
-                {feed.length > 1 && (
+              {/* Кнопка открытия раздела "Ближайшие события" */}
+              {feed.length > 1 && (
+                <div className="flex justify-end mb-4">
                   <button
                     onClick={() => {
                       setShowEventsFeed(true);
@@ -1387,8 +1397,8 @@ function App() {
                     <Search size={14} />
                     <span>{isRussian ? 'Все события' : 'All events'}</span>
                   </button>
-                )}
-              </div>
+                </div>
+              )}
               {isLoadingFeed ? (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -1646,9 +1656,15 @@ function App() {
                               <cat.icon size={28} className="text-white/80" />
                             </div>
                           </motion.div>
-                          <span className="text-sm font-light tracking-wide text-white text-center">
-                            {isRussian ? cat.label.ru : cat.label.en}
-                          </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="text-sm font-light tracking-wide text-white text-center">
+                              {isRussian ? cat.label.ru : cat.label.en}
+                            </span>
+                            {/* Подсказка (caption) */}
+                            <span className="text-[10px] text-white/50 text-center leading-tight px-1">
+                              {isRussian ? cat.text.ru : cat.text.en}
+                            </span>
+                          </div>
                         </motion.button>
                       );
                     })}
@@ -2019,7 +2035,7 @@ function App() {
                 >
                   <X size={20} className="text-white/70" />
                 </button>
-              </div>
+    </div>
 
               {/* Аватар и имя */}
               <div className="flex flex-col items-center gap-3 mb-6">
@@ -2279,6 +2295,7 @@ function App() {
               onClick={() => {
                 setShowFriendsList(false);
                 setFriendsSearchQuery('');
+                setShowFriendsSearch(false);
               }}
               className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[2000]"
             />
@@ -2298,32 +2315,63 @@ function App() {
                 <h3 className="text-xl font-light text-white">
                   {isRussian ? 'Друзья' : 'Friends'}
                 </h3>
-                <button
-                  onClick={() => {
-                    setShowFriendsList(false);
-                    setFriendsSearchQuery('');
-                  }}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                >
-                  <X size={20} className="text-white/60" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Кнопка поиска */}
+                  <button
+                    onClick={() => {
+                      setShowFriendsSearch(!showFriendsSearch);
+                      if (!showFriendsSearch && friendsSearchInputRef.current) {
+                        setTimeout(() => {
+                          friendsSearchInputRef.current?.focus();
+                        }, 100);
+                      } else if (!showFriendsSearch) {
+                        setFriendsSearchQuery('');
+                      }
+                      if (window.Telegram?.WebApp?.HapticFeedback) {
+                        try {
+                          window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                        } catch (e) {
+                          console.warn('Haptic error:', e);
+                        }
+                      }
+                    }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                    title={isRussian ? 'Поиск' : 'Search'}
+                  >
+                    <Search size={18} className={`text-white/60 ${showFriendsSearch ? 'text-white' : ''}`} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowFriendsList(false);
+                      setFriendsSearchQuery('');
+                      setShowFriendsSearch(false);
+                    }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    <X size={20} className="text-white/60" />
+                  </button>
+                </div>
               </div>
 
-              {/* Поле поиска друзей - не активное при открытии */}
-              <div className="relative mb-4">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
-                <input
-                  ref={friendsSearchInputRef}
-                  type="text"
-                  value={friendsSearchQuery}
-                  onChange={(e) => setFriendsSearchQuery(e.target.value)}
-                  placeholder={isRussian ? 'Поиск друзей...' : 'Search friends...'}
-                  className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
-                  onFocus={() => {
-                    // Поле становится активным только при явном клике
-                  }}
-                />
-              </div>
+              {/* Поле поиска друзей - показывается только при нажатии на кнопку поиска */}
+              {showFriendsSearch && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="relative mb-4 overflow-hidden"
+                >
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                  <input
+                    ref={friendsSearchInputRef}
+                    type="text"
+                    value={friendsSearchQuery}
+                    onChange={(e) => setFriendsSearchQuery(e.target.value)}
+                    placeholder={isRussian ? 'Поиск друзей...' : 'Search friends...'}
+                    className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/20 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm text-white placeholder:text-white/35"
+                  />
+                </motion.div>
+              )}
 
               {/* Список друзей */}
               <div className="flex-1 overflow-y-auto space-y-2">
@@ -2360,6 +2408,7 @@ function App() {
                           );
                           setShowFriendsList(false);
                           setFriendsSearchQuery('');
+                          setShowFriendsSearch(false);
                         }}
                       >
                         {/* Аватар друга с индикатором онлайн */}

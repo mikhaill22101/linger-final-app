@@ -252,7 +252,7 @@ export const osmMapAdapter: MapAdapter = {
       // Telegram WebView устанавливает этот заголовок на основе language_code пользователя
       // Для русского языка (language_code: 'ru') будут показываться русские названия
     }).addTo(map);
-    
+
     // Примечание: Если вам нужен более явный контроль над языком названий (как в Mapbox GL JS),
     // можно перейти на Mapbox GL JS вместо Leaflet, но это потребует:
     // 1. API ключ Mapbox
@@ -544,6 +544,11 @@ export const osmMapAdapter: MapAdapter = {
         map.flyTo([location.lat, location.lng], zoom, {
           duration: duration,
           easeLinearity: 0.25,
+        });
+      },
+      setCenter(location: GeoLocation, zoom: number = 15) {
+        map.setView([location.lat, location.lng], zoom, {
+          animate: false, // Без анимации для точного позиционирования
         });
       },
       getBounds() {

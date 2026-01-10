@@ -383,14 +383,19 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
             
             // Для HomeScreen (isBackground или maxEvents) центрируем сразу с правильным zoom
             if (isBackground || maxEvents) {
-              // Принудительное центрирование на координатах пользователя для HomeScreen
+              // Принудительное точное центрирование на координатах пользователя для HomeScreen
               setTimeout(() => {
                 if (mapInstanceRef.current) {
-                  // Принудительно центрируем карту на пользователе с zoom 14 для HomeScreen
-                  mapInstanceRef.current.flyTo(currentUserLocation, finalZoom, 0.6); // Плавная анимация за 0.6 секунды
-                  console.log('[MapScreen] Карта принудительно центрирована на пользователе для HomeScreen (zoom:', finalZoom, ')');
+                  // Используем setCenter для точного позиционирования без анимации
+                  if (mapInstanceRef.current.setCenter) {
+                    mapInstanceRef.current.setCenter(currentUserLocation, finalZoom);
+                  } else {
+                    // Fallback на flyTo если setCenter недоступен
+                    mapInstanceRef.current.flyTo(currentUserLocation, finalZoom, 0.3);
+                  }
+                  console.log('[MapScreen] Карта точно центрирована на пользователе для HomeScreen (zoom:', finalZoom, ')');
                 }
-              }, 250); // Небольшая задержка для завершения инициализации и invalidateSize
+              }, 300); // Увеличенная задержка для гарантии правильного расчета размеров
             }
 
             // Эффект плавного полета камеры (Zenly Style): только для отдельной страницы карты, не для HomeScreen
@@ -569,13 +574,17 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         }, 50);
       }
       
-      // Плавно центрируем карту на пользователе (flyTo для плавной анимации)
+      // ТОЧНОЕ центрирование карты на пользователе (setCenter для точного позиционирования без анимации)
       setTimeout(() => {
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.flyTo(propUserLocation, finalZoom, 0.6);
-          console.log('[MapScreen] Карта принудительно центрирована на пользователе (zoom:', finalZoom, ') для HomeScreen:', !!maxEvents);
+        if (mapInstanceRef.current && mapInstanceRef.current.setCenter) {
+          // Используем setCenter для точного центрирования без анимации
+          mapInstanceRef.current.setCenter(propUserLocation, finalZoom);
+          console.log('[MapScreen] Карта точно центрирована на пользователе (zoom:', finalZoom, ') для HomeScreen:', !!maxEvents);
+        } else if (mapInstanceRef.current) {
+          // Fallback на flyTo если setCenter недоступен
+          mapInstanceRef.current.flyTo(propUserLocation, finalZoom, 0.3);
         }
-      }, 150); // Небольшая задержка для завершения invalidateSize
+      }, 200); // Увеличенная задержка для гарантии правильного расчета размеров
     }
   }, [propUserLocation, status]);
 
