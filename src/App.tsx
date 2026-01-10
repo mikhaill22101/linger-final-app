@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import WebApp from '@twa-dev/sdk';
-import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search, Dice6, Handshake } from 'lucide-react';
+import { Sparkles, Zap, Film, MapPin, Utensils, Users, Heart, Home, User, X, Clock, UserPlus, UserMinus, PlusCircle, UsersRound, Search, Dice6, Handshake, LogOut, UserCheck, UserX, Filter } from 'lucide-react';
 import { categoryEmojis } from './lib/categoryColors';
 import { getSmartIcon } from './lib/smartIcon';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,12 +9,19 @@ import MapScreen from './components/MapScreen';
 import MapPicker from './components/MapPicker';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from './lib/supabase';
 import { notifyNearbyFriendEvent } from './lib/notifications';
+import { useLingerDuo } from './context/LingerDuoContext';
+import { CircleGestureDetector } from './components/CircleGestureDetector';
+import { AuthScreen } from './components/AuthScreen';
+import { DuoEventRequestsManager } from './components/DuoEventRequestsManager';
+import { DuoEventRequestButton } from './components/DuoEventRequestButton';
+import { isAuthenticated, getCurrentUser, getUserId, signOut } from './lib/auth-universal';
+import type { AuthUser } from './lib/auth-universal';
 
 interface Impulse {
   id: number;
   content: string;
   category: string;
-  creator_id: number;
+  creator_id: string; // UUID из Supabase Auth (единый ID для всех платформ)
   created_at: string;
   author_name?: string;
   author_avatar?: string;
@@ -24,6 +31,9 @@ interface Impulse {
   event_date?: string;
   event_time?: string;
   address?: string;
+  is_duo_event?: boolean;
+  event_requests?: EventRequest[];
+  selected_participant_id?: string | null; // UUID
 }
 
 interface EventTemplate {
@@ -179,6 +189,19 @@ function App() {
   const [showEventsFeed, setShowEventsFeed] = useState(false); // Показать раздел "Ближайшие события"
   const [eventsSearchQuery, setEventsSearchQuery] = useState(''); // Поиск по событиям в разделе "Ближайшие события"
   const eventsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска событий
+
+  // Linger Duo режим
+  const { isDuoMode, activateDuoMode, deactivateDuoMode } = useLingerDuo();
+  const [isFlipping, setIsFlipping] = useState(false); // Анимация разворота экрана
+  const [duoEventRequests, setDuoEventRequests] = useState<DuoEventRequest[]>([]); // Запросы на участие в Duo-событии
+  const [isLoadingDuoRequests, setIsLoadingDuoRequests] = useState(false); // Загрузка запросов
+  const [duoEventGenderFilter, setDuoEventGenderFilter] = useState<'male' | 'female' | 'all'>('all'); // Фильтр по полу для запросов
+  const [isSendingDuoRequest, setIsSendingDuoRequest] = useState(false); // Отправка запроса на участие
+
+  // Универсальная авторизация
+  const [currentAuthUser, setCurrentAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAuthenticatedUser, setIsAuthenticatedUser] = useState(false);
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -391,46 +414,75 @@ function App() {
     return `${km.toFixed(1)} км`;
   };
 
-  // Инициализация Telegram WebApp и первоначенная загрузка данных
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Инициализация авторизации и проверка сессии
   useEffect(() => {
-    try {
+    const checkAuth = async () => {
+      setIsAuthLoading(true);
+      
+      try {
+        const authenticated = await isAuthenticated();
+        setIsAuthenticatedUser(authenticated);
+        
+        if (authenticated) {
+          const user = await getCurrentUser();
+          if (user) {
+            setCurrentAuthUser(user);
+            setUserAvatar(user.avatar_url);
+            setUserName(user.full_name || user.email || user.telegram_username || '');
+            
+            // Получаем геопозицию пользователя
+            const location = await getCurrentLocation();
+            if (location) {
+              setUserLocation(location);
+            }
+            
+            // Загружаем данные приложения
+            if (isSupabaseConfigured) {
+              loadFeed();
+              loadUnreadMessagesCount();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking authentication:', error);
+        setIsAuthenticatedUser(false);
+      } finally {
+        setIsAuthLoading(false);
+      }
+    };
+
+    checkAuth();
+
+    // Инициализация Telegram WebApp (если доступен)
+    if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
+      try {
     WebApp.ready();
     WebApp.expand();
-      
-      // Получаем геопозицию пользователя
-      (async () => {
-        const location = await getCurrentLocation();
-        if (location) {
-          setUserLocation(location);
-        }
-      })();
-      
-      // Проверяем подключение к Supabase перед загрузкой данных
-      (async () => {
-        if (!isSupabaseConfigured) {
-          console.error('❌ Supabase не настроен. Проверьте переменные окружения.');
-          if (window.Telegram?.WebApp?.showAlert) {
-            window.Telegram.WebApp.showAlert('Ошибка: Supabase не настроен. Проверьте конфигурацию.');
-          }
-          return;
-        }
-        
-        const isConnected = await checkSupabaseConnection();
-        if (!isConnected) {
-          console.warn('⚠️ Не удалось подключиться к Supabase');
-        }
-        
-        // Загружаем ленту сразу (даже без геолокации, расстояния будут пересчитаны позже)
-    loadFeed();
-        
-        // Загружаем количество непрочитанных сообщений
-        loadUnreadMessagesCount();
-      })();
-    } catch (e) {
-      console.error('Error in App useEffect:', e);
+      } catch (e) {
+        console.warn('Telegram WebApp not available:', e);
+      }
     }
   }, []);
+
+  // Обработка успешной авторизации
+  const handleAuthSuccess = async (user: AuthUser) => {
+    setCurrentAuthUser(user);
+    setIsAuthenticatedUser(true);
+    setUserAvatar(user.avatar_url);
+    setUserName(user.full_name || user.email || user.telegram_username || '');
+    
+    // Получаем геопозицию пользователя
+    const location = await getCurrentLocation();
+    if (location) {
+      setUserLocation(location);
+    }
+    
+    // Загружаем данные приложения
+    if (isSupabaseConfigured) {
+      loadFeed();
+      loadUnreadMessagesCount();
+    }
+  };
 
   // Перезагружаем ленту, когда userLocation становится доступным (для правильного расчета расстояний)
   useEffect(() => {
@@ -441,7 +493,8 @@ function App() {
 
   // Загрузка списка друзей
   const loadFriendsList = async () => {
-    const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    // Используем единый user_id из универсальной системы авторизации
+    const currentUserId = currentAuthUser?.id || await getUserId();
     if (!currentUserId || !isSupabaseConfigured) {
       setFriends([]);
       return;
@@ -536,7 +589,8 @@ function App() {
 
   // Загрузка количества непрочитанных сообщений и уведомлений
   const loadUnreadMessagesCount = async () => {
-    const currentUserId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    // Используем единый user_id из универсальной системы авторизации
+    const currentUserId = currentAuthUser?.id || await getUserId();
     if (!currentUserId || !isSupabaseConfigured) return;
 
     try {
@@ -581,10 +635,10 @@ function App() {
         return;
       }
 
-      // Исправленный запрос: показываем все активные impulses, отсортированные по created_at DESC
+      // Загружаем все активные impulses, включая Duo-события
       const { data, error } = await supabase
         .from('impulses')
-        .select('*, event_date, event_time, address')
+        .select('*, event_date, event_time, address, is_duo_event, selected_participant_id')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -602,7 +656,7 @@ function App() {
 
       // Загружаем имена авторов и аватары отдельно
       const creatorIds = [...new Set(data.map((item) => item.creator_id))];
-      let profilesMap = new Map<number, { name: string; avatar?: string }>();
+      let profilesMap = new Map<string, { name: string; avatar?: string }>(); // Используем string (UUID)
 
       if (creatorIds.length > 0) {
         try {
@@ -613,7 +667,7 @@ function App() {
 
           if (profiles) {
             profilesMap = new Map(
-              profiles.map((p: { id: number; full_name: string | null; avatar_url?: string | null }) => [
+              profiles.map((p: { id: string; full_name: string | null; avatar_url?: string | null }) => [
                 p.id, 
                 { name: p.full_name ?? '', avatar: p.avatar_url || undefined }
               ])
@@ -650,6 +704,8 @@ function App() {
           event_date: item.event_date,
           event_time: item.event_time,
           address: item.address,
+          is_duo_event: item.is_duo_event || false,
+          selected_participant_id: item.selected_participant_id || null,
         };
       });
 
@@ -695,12 +751,8 @@ function App() {
     setEventAddress('');
     setEventCoords(null);
     
-    // Устанавливаем активную категорию для подсветки маркеров на карте
-    const category = categories.find(cat => cat.id === id);
-    if (category) {
-      const categoryName = isRussian ? category.label.ru : category.label.en;
-      setActiveCategory(categoryName);
-    }
+    // Устанавливаем активную категорию для подсветки маркеров на карте (используем ID, а не локализованное название)
+    setActiveCategory(id); // Используем ID категории (например, "spark", "nearby")
     
     // Вибрация при клике на категорию
     if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -880,17 +932,24 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const userId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+      // Используем единый user_id из универсальной системы авторизации
+      const userId = currentAuthUser?.id || await getUserId();
       
       if (!userId) {
         console.error('User ID is missing');
-        WebApp.showAlert('Error: User ID not found');
+        const alertMsg = isRussian ? 'Ошибка: Пользователь не авторизован' : 'Error: User not authenticated';
+        if (window.Telegram?.WebApp?.showAlert) {
+          WebApp.showAlert(alertMsg);
+        } else {
+          alert(alertMsg);
+        }
         setIsSubmitting(false);
         return;
       }
 
       const category = categories.find(cat => cat.id === selectedCategory);
-      const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : selectedCategory;
+      // Сохраняем ID категории в БД (например, "spark", "nearby"), а не локализованное название
+      const categoryIdForDB = selectedCategory || 'unknown';
 
       // Используем координаты из геокодирования, если они есть
       const locationData: { location_lat?: number; location_lng?: number } = {};
@@ -913,13 +972,21 @@ function App() {
         return;
       }
 
+      // В режиме Duo события по умолчанию становятся эксклюзивными
+      const isDuoEvent = isDuoMode;
+
+      // Используем UUID из Supabase Auth как creator_id
       const { data, error } = await supabase
         .from('impulses')
         .insert({
           content: messageContent.trim(),
-          category: categoryName,
-          creator_id: userId,
+          category: categoryIdForDB, // Сохраняем ID категории (например, "nearby", "spark")
+          creator_id: userId, // UUID из Supabase Auth (единый ID для всех платформ)
+          is_duo_event: isDuoEvent,
           ...locationData,
+          ...(eventDate ? { event_date: eventDate } : {}),
+          ...(eventTime ? { event_time: eventTime } : {}),
+          ...(eventAddress ? { address: eventAddress } : {}),
         })
         .select()
         .single();
@@ -1100,8 +1167,114 @@ function App() {
     return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
   };
 
+  // Обработчик активации режима Linger Duo через жест
+  const handleCircleGestureComplete = (center: { x: number; y: number }) => {
+    setIsFlipping(true);
+    
+    // Haptic feedback для активации Duo режима
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      try {
+        window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+      } catch (e) {
+        console.warn('Haptic error:', e);
+      }
+    }
+    
+    setTimeout(() => {
+      activateDuoMode();
+      setIsFlipping(false);
+      
+      // Обновляем карту после разворота, чтобы она корректно отображалась
+      setTimeout(() => {
+        setMapRefreshTrigger(prev => prev + 1);
+      }, 300); // Даем время на завершение анимации
+    }, 600); // Половина длительности анимации (1.2s / 2)
+  };
+
+  // Обработчик выхода из режима Duo
+  const handleExitDuoMode = () => {
+    setIsFlipping(true);
+    
+    // Haptic feedback для выхода из Duo режима
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      try {
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      } catch (e) {
+        console.warn('Haptic error:', e);
+      }
+    }
+    
+    setTimeout(() => {
+      deactivateDuoMode();
+      setIsFlipping(false);
+      setDuoEventRequests([]);
+      
+      // Обновляем карту после разворота, чтобы она корректно отображалась
+      setTimeout(() => {
+        setMapRefreshTrigger(prev => prev + 1);
+      }, 300); // Даем время на завершение анимации
+    }, 600);
+  };
+
+  // Показываем экран загрузки или авторизации
+  if (isAuthLoading) {
   return (
-    <div className="min-h-screen bg-black text-white font-sans selection:bg-white/20 flex flex-col">
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500 mx-auto mb-4"></div>
+          <p className="text-white/60">{isRussian ? 'Загрузка...' : 'Loading...'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Показываем экран авторизации, если пользователь не авторизован
+  if (!isAuthenticatedUser) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+  }
+
+  return (
+    <div 
+      className={`min-h-screen text-white font-sans selection:bg-white/20 flex flex-col transition-all duration-1200 ${
+        isDuoMode 
+          ? 'bg-gradient-to-br from-purple-950 via-indigo-950 to-black' 
+          : 'bg-black'
+      }`}
+      style={{
+        transform: isFlipping ? 'rotateY(180deg)' : 'rotateY(0deg)',
+        transformStyle: 'preserve-3d',
+        transition: 'transform 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+      }}
+    >
+      {/* CircleGestureDetector - распознавание кругового жеста */}
+      {!isDuoMode && (
+        <CircleGestureDetector
+          onCircleComplete={handleCircleGestureComplete}
+          enabled={!modalOpen && !selectedEventDetail && !showFriendsList && !showEventsFeed}
+        />
+      )}
+      
+      {/* Индикатор режима Duo */}
+      {isDuoMode && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[2500] px-4 py-2 rounded-full bg-purple-500/20 border border-purple-400/30 backdrop-blur-md"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-purple-200">
+              {isRussian ? 'Linger Duo' : 'Linger Duo'}
+            </span>
+            <button
+              onClick={handleExitDuoMode}
+              className="text-xs text-purple-300 hover:text-purple-100 transition-colors"
+            >
+              {isRussian ? 'Выход' : 'Exit'}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       <div className={`flex-1 ${activeTab === 'map' ? '' : 'pb-20'} relative`}>
         {activeTab === 'home' ? (
           <div className="relative min-h-screen bg-black">
@@ -1241,24 +1414,26 @@ function App() {
                 WebkitBackdropFilter: 'blur(10px)',
               }}
             >
-              <MapScreen 
-                key="window-map"
-                activeCategory={null}
-                refreshTrigger={mapRefreshTrigger}
-                isBackground={false}
-                maxEvents={4}
-                userLocation={userLocation} // Передаем userLocation для принудительного центрирования
-                onEventLongPress={async (impulse) => {
-                  setSelectedEventDetail(impulse as Impulse);
-                  if (window.Telegram?.WebApp?.HapticFeedback) {
-                    try {
-                      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                    } catch (e) {
-                      console.warn('Haptic error:', e);
+              <div className="map-container">
+                <MapScreen 
+                  key={`window-map-${mapRefreshTrigger}-${isDuoMode ? 'duo' : 'normal'}`}
+                  activeCategory={null}
+                  refreshTrigger={mapRefreshTrigger}
+                  isBackground={false}
+                  maxEvents={4}
+                  userLocation={userLocation} // Передаем userLocation для принудительного центрирования
+                  onEventLongPress={async (impulse) => {
+                    setSelectedEventDetail(impulse as Impulse);
+                    if (window.Telegram?.WebApp?.HapticFeedback) {
+                      try {
+                        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+                      } catch (e) {
+                        console.warn('Haptic error:', e);
+                      }
                     }
-                  }
-                }}
-              />
+                  }}
+                />
+              </div>
             </motion.div>
 
             {/* Hero-карточка "Твой идеальный план" */}
@@ -1550,6 +1725,16 @@ function App() {
                 </button>
               </div>
               <div className="space-y-4">
+                {/* Индикатор Duo-события */}
+                {selectedEventDetail.is_duo_event && (
+                  <div className="p-3 bg-purple-500/20 border border-purple-400/30 rounded-xl">
+                    <div className="flex items-center gap-2 text-purple-200 text-sm">
+                      <Heart size={16} />
+                      <span className="font-medium">{isRussian ? 'Linger Duo — встреча строго на двоих' : 'Linger Duo — strictly for two'}</span>
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-white/90 leading-relaxed">
                   {selectedEventDetail.content}
                 </p>
@@ -1565,6 +1750,74 @@ function App() {
                     <span>
                       {selectedEventDetail.event_date} в {selectedEventDetail.event_time}
                     </span>
+                  </div>
+                )}
+
+                {/* UI для Duo-событий */}
+                {selectedEventDetail.is_duo_event && (
+                  <div className="pt-4 border-t border-white/10">
+                  {(() => {
+                      const currentUserId = currentAuthUser?.id;
+                      const isCreator = selectedEventDetail.creator_id === currentUserId;
+                      const hasSelectedParticipant = !!selectedEventDetail.selected_participant_id;
+
+                      // Если это создатель события - показываем список запросов
+                      if (isCreator) {
+                        return (
+                          <DuoEventRequestsManager
+                            eventId={selectedEventDetail.id}
+                            creatorId={selectedEventDetail.creator_id}
+                            hasSelectedParticipant={hasSelectedParticipant}
+                            selectedParticipantId={selectedEventDetail.selected_participant_id}
+                            onParticipantSelected={() => {
+                              // Перезагружаем событие после выбора участника
+                              loadFeed();
+                              setSelectedEventDetail(null);
+                            }}
+                            isRussian={isRussian}
+                          />
+                        );
+                      }
+
+                      // Если это обычный пользователь - показываем кнопку отправки запроса
+                      if (currentUserId && !hasSelectedParticipant) {
+                        return (
+                          <DuoEventRequestButton
+                            eventId={selectedEventDetail.id}
+                            userId={currentUserId}
+                            isRussian={isRussian}
+                            onRequestSent={() => {
+                              const alertMsg = isRussian ? 'Запрос отправлен! Создатель события увидит вашу заявку.' : 'Request sent! The event creator will see your application.';
+                              if (window.Telegram?.WebApp?.showAlert) {
+                                WebApp.showAlert(alertMsg);
+                              } else {
+                                alert(alertMsg);
+                              }
+                            }}
+                          />
+                        );
+                      }
+
+                      // Если участник уже выбран
+                      if (hasSelectedParticipant && selectedEventDetail.selected_participant_id === currentUserId) {
+                        return (
+                          <div className="p-3 bg-green-500/20 border border-green-400/30 rounded-xl">
+                            <div className="flex items-center gap-2 text-green-200 text-sm">
+                              <UserCheck size={16} />
+                              <span>{isRussian ? 'Вы выбраны для этой встречи!' : 'You were selected for this meeting!'}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="p-3 bg-white/5 border border-white/10 rounded-xl">
+                          <div className="text-white/60 text-sm">
+                            {isRussian ? 'Участник уже выбран' : 'Participant already selected'}
+                          </div>
+                        </div>
+                      );
+                  })()}
                   </div>
                 )}
               </div>
@@ -1746,9 +1999,13 @@ function App() {
                       }`}
                     >
                       {(() => {
-                        const category = categories.find(cat => cat.id === selectedCategory);
-                        const categoryName = category ? (isRussian ? category.label.ru : category.label.en) : '';
-                        const emoji = categoryEmojis[categoryName] || '✨';
+                        // Используем ID категории для получения эмодзи
+                        const categoryId = selectedCategory || '';
+                        const categoryName = categories.find(cat => cat.id === selectedCategory) 
+                          ? (isRussian ? categories.find(cat => cat.id === selectedCategory)!.label.ru : categories.find(cat => cat.id === selectedCategory)!.label.en)
+                          : '';
+                        // Пробуем получить эмодзи по ID (например, "spark", "nearby"), затем по локализованному названию
+                        const emoji = categoryEmojis[categoryId] || categoryEmojis[categoryName] || getSmartIcon('', categoryId).emoji || '✨';
                         return isRussian ? `Выберем время ${emoji}` : `Choose Time ${emoji}`;
                       })()}
                     </button>

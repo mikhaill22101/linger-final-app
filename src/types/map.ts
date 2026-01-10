@@ -6,11 +6,22 @@ export interface GeoLocation {
   lng: number;
 }
 
+export interface EventRequest {
+  id: number;
+  event_id: number;
+  user_id: string; // UUID из Supabase Auth
+  user_name?: string;
+  user_avatar?: string;
+  user_gender?: 'male' | 'female' | 'prefer_not_to_say' | null;
+  created_at: string;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
 export interface ImpulseLocation {
   id: number;
   content: string;
   category: string;
-  creator_id: number;
+  creator_id: string; // UUID из Supabase Auth (единый ID)
   author_name?: string;
   location_lat: number;
   location_lng: number;
@@ -18,6 +29,9 @@ export interface ImpulseLocation {
   address?: string;
   event_date?: string | null;
   event_time?: string | null;
+  is_duo_event?: boolean;
+  event_requests?: EventRequest[];
+  selected_participant_id?: string | null; // UUID
 }
 
 export interface MapInstance {

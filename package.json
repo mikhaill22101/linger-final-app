@@ -7,7 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "capacitor:sync": "npx cap sync",
+    "capacitor:add:ios": "npx cap add ios",
+    "capacitor:add:android": "npx cap add android",
+    "capacitor:open:ios": "npx cap open ios",
+    "capacitor:open:android": "npx cap open android",
+    "capacitor:build:ios": "npm run build && npx cap sync ios",
+    "capacitor:build:android": "npm run build && npx cap sync android"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.0",
@@ -23,6 +30,11 @@
     "use-supercluster": "^1.2.0"
   },
   "devDependencies": {
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/haptics": "^8.0.0",
     "@eslint/js": "^9.39.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",

@@ -5,6 +5,7 @@ import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search,
 import WebApp from '@twa-dev/sdk';
 import { getSmartIcon } from '../lib/smartIcon';
 import { notifyFriendAdded } from '../lib/notifications';
+import { syncUserProfile } from '../lib/auth';
 
 interface TelegramUser {
   id?: number;
@@ -19,6 +20,7 @@ interface ProfileState {
   photoUrl?: string;
   bio: string;
   telegramId?: number;
+  gender?: 'male' | 'female' | 'prefer_not_to_say' | null;
 }
 
 interface MyImpulse {
@@ -38,6 +40,7 @@ const Profile: React.FC = () => {
     photoUrl: undefined,
     bio: '',
     telegramId: undefined,
+    gender: null,
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -128,18 +131,27 @@ const Profile: React.FC = () => {
             telegramId: telegramId,
           }));
 
-          // Загружаем био из базы данных, если есть telegram_id
+          // Синхронизируем профиль с базой данных для единого аккаунта
           if (telegramId) {
             if (!isSupabaseConfigured) {
-              console.warn('⚠️ Supabase не настроен, пропускаем загрузку профиля');
+              console.warn('⚠️ Supabase не настроен, пропускаем синхронизацию профиля');
               setIsLoading(false);
               return;
             }
 
+            // Синхронизируем профиль (создаем или обновляем)
+            const syncResult = await syncUserProfile(user);
+            if (syncResult.success) {
+              console.log('✅ Profile synced for unified account:', syncResult.profileId);
+            } else {
+              console.warn('⚠️ Profile sync failed:', syncResult.error);
+            }
+
+            // Загружаем дополнительные данные профиля (bio, gender) из базы данных
             const { data, error } = await supabase
               .from('profiles')
-              .select('bio, full_name, avatar_url')
-              .eq('id', telegramId)
+              .select('bio, full_name, avatar_url, gender')
+              .eq('telegram_id', telegramId)
               .single();
 
             if (error && error.code !== 'PGRST116') {
@@ -153,6 +165,7 @@ const Profile: React.FC = () => {
                 bio: data.bio || '',
                 firstName: data.full_name || prev.firstName,
                 photoUrl: data.avatar_url || prev.photoUrl,
+                gender: data.gender || null,
               }));
             }
           }
@@ -573,6 +586,7 @@ const Profile: React.FC = () => {
           id: profile.telegramId, // bigint из Telegram user.id
           full_name: profile.firstName,
           bio: profile.bio,
+          gender: profile.gender || null,
           updated_at: new Date().toISOString(),
       };
 
@@ -1427,6 +1441,81 @@ const Profile: React.FC = () => {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Пол (Gender) */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium tracking-[0.2em] text-white/50 uppercase">
+                {(() => {
+                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                  return isRussian ? 'Пол' : 'Gender';
+                })()}
+              </p>
+              <div className="w-full rounded-2xl bg-white/5 border border-white/10 px-3.5 py-3">
+                <select
+                  value={profile.gender || 'prefer_not_to_say'}
+                  onChange={async (e) => {
+                    const value = e.target.value as 'male' | 'female' | 'prefer_not_to_say';
+                    const newGender = value === 'prefer_not_to_say' ? null : value;
+                    setProfile((prev) => ({
+                      ...prev,
+                      gender: newGender,
+                    }));
+                    
+                    // Автоматически сохраняем при изменении
+                    if (!profile.telegramId) {
+                      console.error('Telegram ID is missing');
+                      return;
+                    }
+
+                    if (!isSupabaseConfigured) {
+                      WebApp.showAlert('Ошибка: База данных не настроена');
+                      return;
+                    }
+
+                    try {
+                      const updateData: any = {
+                        id: profile.telegramId,
+                        gender: newGender,
+                        updated_at: new Date().toISOString(),
+                      };
+
+                      const { error } = await supabase
+                        .from('profiles')
+                        .upsert(updateData, {
+                          onConflict: 'id',
+                        });
+
+                      if (error) {
+                        console.error('❌ Error saving gender:', error);
+                        WebApp.showAlert('Ошибка при сохранении');
+                      }
+                    } catch (err) {
+                      console.error('Failed to save gender:', err);
+                    }
+                  }}
+                  className="w-full bg-transparent text-sm text-white/90 focus:outline-none cursor-pointer"
+                >
+                  <option value="prefer_not_to_say" className="bg-black text-white">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Не указывать' : 'Prefer not to say';
+                    })()}
+                  </option>
+                  <option value="male" className="bg-black text-white">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Мужской' : 'Male';
+                    })()}
+                  </option>
+                  <option value="female" className="bg-black text-white">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Женский' : 'Female';
+                    })()}
+                  </option>
+                </select>
+              </div>
             </div>
 
             {/* Настройки button */}

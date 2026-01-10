@@ -460,6 +460,27 @@ body {
   overflow: hidden;
 }
 
+/* Стили для режима Linger Duo - обеспечение корректной работы карты после разворота */
+.duo-mode-active {
+  transform-style: preserve-3d;
+  perspective: 1000px;
+}
+
+.duo-mode-active .map-container,
+.duo-mode-active .leaflet-container {
+  transform: none; /* Убираем transform для карты, чтобы она не вращалась */
+  backface-visibility: visible;
+}
+
+/* Обеспечение корректной работы карты после разворота экрана */
+[style*="rotateY(180deg)"] .map-container,
+[style*="rotateY(180deg)"] .leaflet-container,
+[style*="rotateY(0deg)"] .map-container,
+[style*="rotateY(0deg)"] .leaflet-container {
+  transform: none !important; /* Карта не должна вращаться вместе с интерфейсом */
+  backface-visibility: visible;
+}
+
 /* Анимация покачивания для категорий (tilt/swing) - мягкое, едва заметное покачивание */
 @keyframes categoryTilt {
   0%, 100% {

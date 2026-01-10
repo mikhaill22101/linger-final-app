@@ -28,8 +28,10 @@ try {
     console.log('✅ Supabase client initialized successfully');
     supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: false,
-        autoRefreshToken: false,
+        persistSession: true, // Включаем сохранение сессии для standalone приложения
+        autoRefreshToken: true, // Автоматическое обновление токенов
+        detectSessionInUrl: true, // Определение сессии из URL (для OAuth)
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined, // Сохранение в localStorage
       },
     });
 

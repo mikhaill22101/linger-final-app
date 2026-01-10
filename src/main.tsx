@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { LingerDuoProvider } from './context/LingerDuoContext.tsx'
 
 console.log('main.tsx: Starting application...');
 
@@ -14,7 +15,9 @@ try {
   const root = createRoot(rootElement);
   root.render(
     <StrictMode>
-      <App />
+      <LingerDuoProvider>
+        <App />
+      </LingerDuoProvider>
     </StrictMode>,
   );
   console.log('main.tsx: Application rendered successfully');

@@ -10,12 +10,14 @@ interface ImpulseRow {
   id: number;
   content: string;
   category: string;
-  creator_id: number;
+  creator_id: string; // UUID
   created_at: string;
   location_lat: number | null;
   location_lng: number | null;
   event_date?: string | null;
   event_time?: string | null;
+  is_duo_event?: boolean | null;
+  selected_participant_id?: string | null; // UUID
 }
 
 type MapStatus = 'loading' | 'ready' | 'error';
@@ -181,7 +183,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
     console.log('[loadImpulses] Запрос данных из Supabase (limit 50)...');
     const { data, error } = await supabase
       .from('impulses')
-      .select('id, content, category, creator_id, created_at, location_lat, location_lng, event_date, event_time')
+      .select('id, content, category, creator_id, created_at, location_lat, location_lng, event_date, event_time, is_duo_event, selected_participant_id')
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -214,7 +216,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
 
     // Загружаем имена авторов
     const creatorIds = [...new Set(withLocation.map((r) => r.creator_id))];
-    let profilesMap = new Map<number, string>();
+    let profilesMap = new Map<string, string>(); // Используем string (UUID)
 
     if (creatorIds.length > 0) {
       try {
@@ -225,7 +227,7 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
 
         if (profiles) {
           profilesMap = new Map(
-            profiles.map((p: { id: number; full_name: string | null }) => [p.id, p.full_name ?? ''])
+            profiles.map((p: { id: string; full_name: string | null }) => [p.id, p.full_name ?? ''])
           );
         }
       } catch (e) {
@@ -246,6 +248,8 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
       address: undefined,
       event_date: row.event_date || undefined,
       event_time: row.event_time || undefined,
+      is_duo_event: row.is_duo_event || false,
+      selected_participant_id: row.selected_participant_id || null,
     }));
 
     console.log(`[loadImpulses] Возвращаем ${impulses.length} импульсов (без адресов)`);
@@ -339,17 +343,25 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
         try {
             console.log('[MapScreen] Начало инициализации карты...');
             
-            // Используем propUserLocation если передан, иначе получаем геопозицию
+            // Используем propUserLocation если передан, иначе получаем геопозицию (с защитой от ошибок)
             let currentUserLocation: GeoLocation;
-            if (propUserLocation) {
-              currentUserLocation = propUserLocation;
-              setUserLocation(propUserLocation);
-              console.log('[MapScreen] Используем userLocation из props:', propUserLocation);
-            } else {
-              // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
-              currentUserLocation = await getUserLocation();
+            try {
+              if (propUserLocation) {
+                currentUserLocation = propUserLocation;
+                setUserLocation(propUserLocation);
+                console.log('[MapScreen] Используем userLocation из props:', propUserLocation);
+              } else {
+                // Получаем геопозицию (максимум 3 секунды, резерв Сестрорецк)
+                currentUserLocation = await getUserLocation();
+                setUserLocation(currentUserLocation);
+                console.log('[MapScreen] Получена геопозиция через getUserLocation:', currentUserLocation);
+              }
+            } catch (locationError) {
+              console.error('[MapScreen] Ошибка при получении геопозиции:', locationError);
+              // Используем резервную локацию при ошибке
+              currentUserLocation = DEFAULT_LOCATION;
               setUserLocation(currentUserLocation);
-              console.log('[MapScreen] Получена геопозиция через getUserLocation:', currentUserLocation);
+              console.log('[MapScreen] Используем резервную локацию:', currentUserLocation);
             }
             
             const isDefaultLocation = currentUserLocation.lat === DEFAULT_LOCATION.lat && currentUserLocation.lng === DEFAULT_LOCATION.lng;

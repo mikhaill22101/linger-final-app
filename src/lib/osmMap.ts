@@ -1,7 +1,7 @@
 import L, { Map as LeafletMap, Marker as LeafletMarker, DivIcon } from 'leaflet';
 import Supercluster from 'supercluster';
 import type { GeoLocation, ImpulseLocation, MapAdapter, MapInstance } from '../types/map';
-import { categoryColors } from './categoryColors';
+import { getCategoryColor } from './categoryColors';
 import { getSmartIcon } from './smartIcon';
 
 // Leaflet CSS подключен в src/index.css
@@ -31,11 +31,16 @@ function createClusterIcon(
   const size = Math.min(50 + pointCount * 3, 80); // Размер кластера зависит от количества точек
   const iconSize = Math.max(16, Math.min(pointCount.toString().length * 8, 24));
   
-  // Получаем иконку самой популярной категории
+  // Получаем иконку самой популярной категории (с защитой от ошибок)
   let categoryIcon = '📍';
   if (dominantCategory) {
-    const iconData = getSmartIcon(dominantCategory);
-    categoryIcon = iconData.emoji;
+    try {
+      const iconData = getSmartIcon(dominantCategory || '', dominantCategory || '');
+      categoryIcon = iconData.emoji || '📍';
+    } catch (error) {
+      console.warn('[createClusterIcon] Ошибка при получении иконки категории:', dominantCategory, error);
+      categoryIcon = '📍'; // Fallback на default иконку
+    }
   }
   
   return L.divIcon({
@@ -227,10 +232,6 @@ export const osmMapAdapter: MapAdapter = {
     // Linger Map Style: пастельные сочные цвета (бирюзовая вода, салатовая зелень)
     // Используем тайлы OSM с русскими названиями
     
-    // Определяем язык пользователя (по умолчанию русский для Telegram)
-    const userLang = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code || 'ru';
-    const isRussian = userLang === 'ru' || !userLang;
-    
     // Для Leaflet с OpenStreetMap нельзя использовать синтаксис Mapbox GL JS (map.setLayoutProperty)
     // Вместо этого используем стандартные OSM тайлы, которые автоматически определяют язык
     // через HTTP заголовок Accept-Language, который Telegram WebView устанавливает правильно
@@ -239,7 +240,7 @@ export const osmMapAdapter: MapAdapter = {
     // Стандартные OSM тайлы показывают названия на языке, определенном через Accept-Language
     // Для русского языка (language_code: 'ru') Telegram WebView отправляет Accept-Language: ru-RU,ru;q=0.9
     // и OSM сервер возвращает тайлы с русскими названиями
-    const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '', // Пустая атрибуция (скрыта через CSS)
       maxZoom: 19,
       tileSize: 256,
@@ -381,128 +382,80 @@ export const osmMapAdapter: MapAdapter = {
           const impulse = properties.impulse as ImpulseLocation;
           if (!impulse) return;
           
-          const color = categoryColors[impulse.category] || '#3498db';
-          const smartIconData = getSmartIcon(impulse.content, impulse.category);
-          const isActive = currentActiveCategory === impulse.category;
-          
-          const markerIcon = createPulseMarkerIcon(
-            color,
-            smartIconData.emoji,
-            isActive,
-            smartIconData.animationType
-          );
-          
-          const marker = L.marker([lat, lng], { icon: markerIcon });
-          
-          // Анимация появления при загрузке (fade-in + slide-up)
-          const markerElement = marker.getElement();
-          if (markerElement) {
-            markerElement.style.opacity = '0';
-            markerElement.style.transform = 'translateY(10px)';
-            setTimeout(() => {
-              markerElement.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
-              markerElement.style.opacity = '1';
-              markerElement.style.transform = 'translateY(0)';
-            }, Math.random() * 200); // Небольшая случайная задержка для эффекта каскада
-          }
-          
-          // Обработка длительного нажатия
-          let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-          let isLongPress = false;
-          let clickHandled = false;
-          
-          const handleStart = () => {
-            isLongPress = false;
-            clickHandled = false;
-            longPressTimer = setTimeout(() => {
-              isLongPress = true;
-              clickHandled = true;
-              // Вызываем обработчик длительного нажатия, если есть
-              if (currentOnLongPress) {
-                currentOnLongPress(impulse);
-                // Haptic feedback при длительном нажатии
-                if (window.Telegram?.WebApp?.HapticFeedback) {
-                  try {
-                    window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
-                  } catch (e) {
-                    // Игнорируем ошибки
-                  }
-                }
-              }
-            }, 600);
-          };
-          
-          const handleEnd = () => {
-            if (longPressTimer) {
-              clearTimeout(longPressTimer);
-              longPressTimer = null;
+          try {
+            // Безопасное получение цвета категории с default значением
+            const color = getCategoryColor(impulse.category);
+            const smartIconData = getSmartIcon(impulse.content || '', impulse.category || '');
+            const isActive = currentActiveCategory === impulse.category;
+            
+            const markerIcon = createPulseMarkerIcon(
+              color,
+              smartIconData.emoji || '📍',
+              isActive,
+              smartIconData.animationType || 'pulse'
+            );
+            
+            const marker = L.marker([lat, lng], { icon: markerIcon });
+            
+            // Анимация появления при загрузке (fade-in + slide-up)
+            const markerElement = marker.getElement();
+            if (markerElement) {
+              markerElement.style.opacity = '0';
+              markerElement.style.transform = 'translateY(10px)';
+              setTimeout(() => {
+                markerElement.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
+                markerElement.style.opacity = '1';
+                markerElement.style.transform = 'translateY(0)';
+              }, Math.random() * 200); // Небольшая случайная задержка для эффекта каскада
             }
-          };
-          
-          // Обработка клика (только если не было длительного нажатия)
-          marker.on('click', () => {
-            if (!clickHandled && !isLongPress && currentOnClick) {
-              currentOnClick(impulse);
-              
-              // Haptic feedback
-              if (window.Telegram?.WebApp?.HapticFeedback) {
-                try {
-                  window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
-                } catch (e) {
-                  // Игнорируем ошибки
-                }
-              }
-            }
-            // Сбрасываем флаги после обработки клика
-            setTimeout(() => {
+            
+            // Обработка длительного нажатия
+            let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+            let isLongPress = false;
+            
+            marker.on('mousedown', () => {
               isLongPress = false;
-              clickHandled = false;
-            }, 100);
-          });
-          
-          marker.on('mousedown', handleStart);
-          marker.on('mouseup', handleEnd);
-          marker.on('mouseleave', handleEnd);
-          
-          // Для touch устройств
-          if (markerElement) {
-            markerElement.addEventListener('touchstart', handleStart, { passive: true });
-            markerElement.addEventListener('touchend', handleEnd, { passive: true });
-            markerElement.addEventListener('touchcancel', handleEnd, { passive: true });
-          }
-          
-          // Плавное увеличение при наведении/нажатии (scale 1.2)
-          if (markerElement) {
-            const markerCore = markerElement.querySelector('.marker-core') as HTMLElement;
+              longPressTimer = setTimeout(() => {
+                isLongPress = true;
+                if (currentOnLongPress) {
+                  currentOnLongPress(impulse);
+                }
+              }, 500); // 500ms для длительного нажатия
+            });
             
-            markerElement.addEventListener('mouseenter', () => {
-              if (markerCore) {
-                markerCore.style.transform = 'scale(1.2)';
+            marker.on('mouseup', () => {
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+              if (!isLongPress && currentOnClick) {
+                currentOnClick(impulse);
+              }
+              isLongPress = false;
+            });
+            
+            marker.on('click', () => {
+              if (!isLongPress && currentOnClick) {
+                currentOnClick(impulse);
               }
             });
             
-            markerElement.addEventListener('mouseleave', () => {
-              if (markerCore) {
-                markerCore.style.transform = 'scale(1)';
-              }
-            });
-            
-            // Для touch устройств
-            markerElement.addEventListener('touchstart', () => {
-              if (markerCore) {
-                markerCore.style.transform = 'scale(1.2)';
-              }
-            }, { passive: true });
-            
-            markerElement.addEventListener('touchend', () => {
-              if (markerCore) {
-                markerCore.style.transform = 'scale(1)';
-              }
-            }, { passive: true });
+            marker.addTo(map);
+            markers.push(marker);
+          } catch (error) {
+            console.error('[osmMap] Ошибка при создании маркера для события:', impulse.id, error);
+            // Создаем маркер с default значениями при ошибке
+            const defaultColor = '#3498db';
+            const defaultIconData = getSmartIcon('', '');
+            const defaultMarkerIcon = createPulseMarkerIcon(defaultColor, defaultIconData.emoji || '📍', false, 'pulse');
+            const defaultMarker = L.marker([lat, lng], { icon: defaultMarkerIcon });
+            if (currentOnClick) {
+              const onClick = currentOnClick; // Сохраняем ссылку для замыкания
+              defaultMarker.on('click', () => onClick(impulse));
+            }
+            defaultMarker.addTo(map);
+            markers.push(defaultMarker);
           }
-          
-          marker.addTo(map);
-          markers.push(marker);
         }
       });
     };
