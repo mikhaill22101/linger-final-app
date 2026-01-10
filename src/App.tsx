@@ -12,6 +12,7 @@ import { notifyNearbyFriendEvent } from './lib/notifications';
 import { useLingerDuo } from './context/LingerDuoContext';
 import { CircleGestureDetector } from './components/CircleGestureDetector';
 import { AuthScreen } from './components/AuthScreen';
+import { CompleteProfileScreen } from './components/CompleteProfileScreen';
 import { DuoEventRequestsManager } from './components/DuoEventRequestsManager';
 import { DuoEventRequestButton } from './components/DuoEventRequestButton';
 import { isAuthenticated, getCurrentUser, getUserId, signOut } from './lib/auth-universal';
@@ -202,6 +203,7 @@ function App() {
   const [currentAuthUser, setCurrentAuthUser] = useState<AuthUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthenticatedUser, setIsAuthenticatedUser] = useState(false);
+  const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false); // Нужно завершить профиль (выбрать пол)
 
   const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
 
@@ -420,26 +422,48 @@ function App() {
       setIsAuthLoading(true);
       
       try {
-        const authenticated = await isAuthenticated();
-        setIsAuthenticatedUser(authenticated);
+        // Проверяем OAuth редирект (для Google, Apple)
+        const { data: { session } } = await supabase.auth.getSession();
         
-        if (authenticated) {
+        if (session) {
+          console.log('✅ OAuth session found, processing...');
+          // OAuth редирект произошел, обрабатываем сессию
           const user = await getCurrentUser();
           if (user) {
-            setCurrentAuthUser(user);
-            setUserAvatar(user.avatar_url);
-            setUserName(user.full_name || user.email || user.telegram_username || '');
-            
-            // Получаем геопозицию пользователя
-            const location = await getCurrentLocation();
-            if (location) {
-              setUserLocation(location);
-            }
-            
-            // Загружаем данные приложения
-            if (isSupabaseConfigured) {
-              loadFeed();
-              loadUnreadMessagesCount();
+            await handleAuthSuccess(user);
+          }
+        } else {
+          // Обычная проверка авторизации
+          const authenticated = await isAuthenticated();
+          setIsAuthenticatedUser(authenticated);
+          
+          if (authenticated) {
+            const user = await getCurrentUser();
+            if (user) {
+              setCurrentAuthUser(user);
+              
+              // Проверяем, нужно ли завершить профиль (выбрать пол)
+              if (!user.gender) {
+                setNeedsProfileCompletion(true);
+                setIsAuthenticatedUser(true); // Пользователь авторизован, но нужно завершить профиль
+              } else {
+                setNeedsProfileCompletion(false);
+                setIsAuthenticatedUser(true);
+                setUserAvatar(user.avatar_url);
+                setUserName(user.full_name || user.email || user.telegram_username || '');
+                
+                // Получаем геопозицию пользователя
+                const location = await getCurrentLocation();
+                if (location) {
+                  setUserLocation(location);
+                }
+                
+                // Загружаем данные приложения
+                if (isSupabaseConfigured) {
+                  loadFeed();
+                  loadUnreadMessagesCount();
+                }
+              }
             }
           }
         }
@@ -453,21 +477,97 @@ function App() {
 
     checkAuth();
 
+    // Слушаем изменения сессии (для OAuth редиректов)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔄 Auth state changed:', event, session?.user?.id);
+      
+      if (event === 'SIGNED_IN' && session) {
+        const user = await getCurrentUser();
+        if (user) {
+          await handleAuthSuccess(user);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setCurrentAuthUser(null);
+        setIsAuthenticatedUser(false);
+        setNeedsProfileCompletion(false);
+      }
+    });
+
     // Инициализация Telegram WebApp (если доступен)
     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
       try {
-    WebApp.ready();
-    WebApp.expand();
+        WebApp.ready();
+        WebApp.expand();
       } catch (e) {
         console.warn('Telegram WebApp not available:', e);
       }
     }
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Обработка успешной авторизации
   const handleAuthSuccess = async (user: AuthUser) => {
+    console.log('✅ Auth success, setting user:', user.id);
+    
+    try {
+      setCurrentAuthUser(user);
+      setIsAuthenticatedUser(true);
+      
+      // Проверяем, нужно ли завершить профиль (выбрать пол)
+      if (!user.gender) {
+        console.log('⚠️ User gender not set, showing profile completion screen');
+        setNeedsProfileCompletion(true);
+        return; // Не загружаем данные, пока профиль не завершен
+      }
+      
+      // Профиль завершен, продолжаем
+      setNeedsProfileCompletion(false);
+      setUserAvatar(user.avatar_url);
+      setUserName(user.full_name || user.email || user.telegram_username || '');
+      
+      // Получаем геопозицию пользователя
+      console.log('📍 Getting user location...');
+      const location = await getCurrentLocation();
+      if (location) {
+        console.log('✅ User location obtained:', location);
+        setUserLocation(location);
+      } else {
+        console.warn('⚠️ User location not available');
+      }
+      
+      // Загружаем данные приложения
+      if (isSupabaseConfigured) {
+        console.log('📦 Loading app data...');
+        loadFeed();
+        loadUnreadMessagesCount();
+      } else {
+        console.warn('⚠️ Supabase not configured, skipping data load');
+      }
+      
+      // Haptic feedback для успешной регистрации
+      if (window.Telegram?.WebApp?.HapticFeedback) {
+        try {
+          window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        } catch (e) {
+          console.warn('Haptic error:', e);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error in handleAuthSuccess:', error);
+      // Не блокируем успешную авторизацию из-за ошибок загрузки данных
+    }
+  };
+
+  // Обработка завершения профиля
+  const handleProfileComplete = async (user: AuthUser) => {
+    console.log('✅ Profile completed, user:', user.id);
+    setNeedsProfileCompletion(false);
     setCurrentAuthUser(user);
-    setIsAuthenticatedUser(true);
+    
+    // Обновляем данные пользователя
     setUserAvatar(user.avatar_url);
     setUserName(user.full_name || user.email || user.telegram_username || '');
     
@@ -481,6 +581,15 @@ function App() {
     if (isSupabaseConfigured) {
       loadFeed();
       loadUnreadMessagesCount();
+    }
+    
+    // Haptic feedback
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      try {
+        window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+      } catch (e) {
+        console.warn('Haptic error:', e);
+      }
     }
   };
 
@@ -1229,8 +1338,22 @@ function App() {
   }
 
   // Показываем экран авторизации, если пользователь не авторизован
+  // Форма регистрации всегда отображается в обычном виде (не переворачивается в режиме Duo)
   if (!isAuthenticatedUser) {
-    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+    return (
+      <div className="auth-screen-container" style={{ transform: 'none !important', backfaceVisibility: 'visible' }}>
+        <AuthScreen onAuthSuccess={handleAuthSuccess} />
+      </div>
+    );
+  }
+
+  // Показываем экран завершения профиля, если пол не выбран
+  if (needsProfileCompletion && currentAuthUser) {
+    return (
+      <div className="auth-screen-container" style={{ transform: 'none !important', backfaceVisibility: 'visible' }}>
+        <CompleteProfileScreen onComplete={handleProfileComplete} />
+      </div>
+    );
   }
 
   return (

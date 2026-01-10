@@ -51,11 +51,12 @@ CREATE INDEX IF NOT EXISTS profiles_phone_idx ON profiles(phone) WHERE phone IS 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, phone, created_at, updated_at)
+  INSERT INTO public.profiles (id, email, phone, gender, created_at, updated_at)
   VALUES (
     NEW.id,
     NEW.email,
     NEW.phone,
+    NULL, -- Поле gender необязательное, устанавливаем NULL при регистрации
     NOW(),
     NOW()
   )
@@ -63,6 +64,7 @@ BEGIN
   SET 
     email = COALESCE(EXCLUDED.email, profiles.email),
     phone = COALESCE(EXCLUDED.phone, profiles.phone),
+    gender = COALESCE(profiles.gender, EXCLUDED.gender), -- Сохраняем существующее значение gender, если есть
     updated_at = NOW();
   RETURN NEW;
 END;

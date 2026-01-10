@@ -481,6 +481,15 @@ body {
   backface-visibility: visible;
 }
 
+/* Форма регистрации всегда отображается в обычном виде (не переворачивается в режиме Duo) */
+.auth-screen-container,
+.auth-screen-container > *,
+[style*="rotateY(180deg)"] .auth-screen-container,
+[style*="rotateY(180deg)"] .auth-screen-container > * {
+  transform: none !important;
+  backface-visibility: visible;
+}
+
 /* Анимация покачивания для категорий (tilt/swing) - мягкое, едва заметное покачивание */
 @keyframes categoryTilt {
   0%, 100% {

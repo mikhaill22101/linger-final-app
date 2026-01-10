@@ -9,6 +9,7 @@ export interface AuthUser {
   telegram_username?: string;
   full_name?: string;
   avatar_url?: string;
+  gender?: 'male' | 'female' | 'prefer_not_to_say' | null; // Пол пользователя (обязателен для доступа к приложению)
 }
 
 export interface AuthSession {
@@ -84,6 +85,7 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
       telegram_username: profile?.telegram_username,
       full_name: profile?.full_name || user.user_metadata?.full_name,
       avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url,
+      gender: profile?.gender || null,
     };
   } catch (error) {
     console.error('Error getting current user:', error);
@@ -97,7 +99,8 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
 export const signUpWithEmail = async (
   email: string,
   password: string,
-  fullName?: string
+  fullName?: string,
+  gender?: 'male' | 'female' | 'prefer_not_to_say' | null
 ): Promise<{ success: boolean; user?: AuthUser; error?: string }> => {
   if (!isSupabaseConfigured) {
     return { success: false, error: 'Database not configured' };
@@ -115,20 +118,45 @@ export const signUpWithEmail = async (
     });
 
     if (error) {
-      return { success: false, error: error.message };
+      console.error('❌ Supabase Auth signUp error:', error);
+      console.error('  Status:', error.status);
+      console.error('  Message:', error.message);
+      
+      // Детальное сообщение об ошибке для пользователя
+      let errorMessage = error.message || 'Registration failed';
+      if (error.message?.includes('User already registered')) {
+        errorMessage = 'Email already registered. Please sign in instead.';
+      } else if (error.message?.includes('Invalid email')) {
+        errorMessage = 'Invalid email address';
+      } else if (error.message?.includes('Password')) {
+        errorMessage = 'Password does not meet requirements (minimum 6 characters)';
+      } else if (error.status === 422) {
+        errorMessage = 'Invalid input data. Please check your email and password.';
+      }
+      
+      return { success: false, error: errorMessage };
     }
 
     if (!data.user) {
-      return { success: false, error: 'User creation failed' };
+      console.error('❌ User creation failed: data.user is null');
+      return { success: false, error: 'User creation failed: no user data returned' };
     }
 
-    // Создаем профиль пользователя
+    // Проверяем, что пол указан при регистрации
+    if (!gender) {
+      return { success: false, error: 'Gender is required for registration' };
+    }
+
+    // Создаем или обновляем профиль пользователя
+    // Примечание: Триггер handle_new_user может уже создать профиль автоматически,
+    // поэтому используем upsert для обновления существующего или создания нового
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
         id: data.user.id, // Используем UUID из Supabase Auth
         email: email,
         full_name: fullName || null,
+        gender: gender, // Поле gender обязательное при регистрации
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, {
@@ -136,8 +164,34 @@ export const signUpWithEmail = async (
       });
 
     if (profileError) {
-      console.error('Error creating profile:', profileError);
-      return { success: false, error: 'Profile creation failed' };
+      console.error('❌ Error creating/updating profile:', profileError);
+      console.error('  Code:', profileError.code);
+      console.error('  Message:', profileError.message);
+      console.error('  Details:', profileError.details);
+      console.error('  Hint:', profileError.hint);
+      
+      // Детальное сообщение об ошибке для пользователя
+      let errorMessage = 'Profile creation failed';
+      
+      if (profileError.code === '23505') {
+        // Unique constraint violation - профиль уже существует, это нормально
+        console.log('ℹ️ Profile already exists (trigger may have created it), continuing...');
+        // Не возвращаем ошибку, т.к. профиль уже существует и это нормально
+      } else if (profileError.code === '23503') {
+        errorMessage = 'Foreign key constraint violation: ' + (profileError.details || 'Check related records');
+      } else if (profileError.code === '23502') {
+        errorMessage = 'Required field is missing: ' + (profileError.details || 'unknown field');
+      } else if (profileError.code === '42P01') {
+        errorMessage = 'Table profiles does not exist. Please run database migrations.';
+      } else if (profileError.message) {
+        errorMessage = profileError.message;
+      }
+      
+      // Если это не ошибка уникальности (профиль уже существует), возвращаем ошибку
+      if (profileError.code !== '23505') {
+        return { success: false, error: errorMessage };
+      }
+      // Если профиль уже существует, продолжаем (это нормально при работе триггера)
     }
 
     return {
@@ -149,10 +203,24 @@ export const signUpWithEmail = async (
       },
     };
   } catch (error) {
-    console.error('Error signing up:', error);
+    console.error('❌ Error signing up (catch):', error);
+    let errorMessage = 'Unknown error occurred during registration';
+    
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      console.error('  Error name:', error.name);
+      console.error('  Error stack:', error.stack);
+    } else if (typeof error === 'object' && error !== null) {
+      const errorObj = error as any;
+      if (errorObj.message) {
+        errorMessage = errorObj.message;
+      }
+      console.error('  Error object:', errorObj);
+    }
+    
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errorMessage,
     };
   }
 };
@@ -257,13 +325,18 @@ export const verifyPhoneOTP = async (
       .upsert({
         id: data.user.id,
         phone: phone,
+        gender: null, // Поле gender необязательное
+        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'id',
       });
 
     if (profileError) {
-      console.error('Error creating profile:', profileError);
+      console.error('❌ Error creating profile (phone):', profileError);
+      console.error('  Code:', profileError.code);
+      console.error('  Message:', profileError.message);
+      console.error('  Details:', profileError.details);
     }
 
     const user = await getCurrentUser();
@@ -334,6 +407,7 @@ export const signInWithTelegram = async (
           telegram_username: telegramUser.username,
           full_name: telegramUser.first_name,
           avatar_url: telegramUser.photo_url,
+          gender: existingProfile.gender || null, // Возвращаем gender из профиля
           ...user,
         },
       };
@@ -373,6 +447,7 @@ export const signInWithTelegram = async (
           telegram_username: telegramUser.username || null,
           full_name: telegramUser.first_name || null,
           avatar_url: telegramUser.photo_url || null,
+          gender: null, // Поле gender необязательное, можно указать позже в профиле
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, {
@@ -380,10 +455,22 @@ export const signInWithTelegram = async (
         });
 
       if (profileError) {
-        console.error('Error creating profile:', profileError);
-        return { success: false, error: 'Profile creation failed' };
+        console.error('❌ Error creating profile (telegram):', profileError);
+        console.error('  Code:', profileError.code);
+        console.error('  Message:', profileError.message);
+        console.error('  Details:', profileError.details);
+        
+        let errorMessage = 'Profile creation failed';
+        if (profileError.message) {
+          errorMessage = profileError.message;
+        }
+        
+        return { success: false, error: errorMessage };
       }
 
+      // Загружаем созданный профиль для получения gender
+      const createdUser = await getCurrentUser();
+      
       return {
         success: true,
         user: {
@@ -392,6 +479,7 @@ export const signInWithTelegram = async (
           telegram_username: telegramUser.username,
           full_name: telegramUser.first_name,
           avatar_url: telegramUser.photo_url,
+          gender: createdUser?.gender || null, // gender будет null для нового пользователя
         },
       };
     }
@@ -491,4 +579,107 @@ export const signOut = async (): Promise<{ success: boolean; error?: string }> =
 export const getUserId = async (): Promise<string | null> => {
   const user = await getCurrentUser();
   return user?.id || null;
+};
+
+/**
+ * Вход через Google OAuth
+ */
+export const signInWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Database not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}${window.location.pathname}`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
+
+    if (error) {
+      console.error('❌ Google OAuth error:', error);
+      return { success: false, error: error.message };
+    }
+
+    // OAuth редирект произойдет автоматически
+    return { success: true };
+  } catch (error) {
+    console.error('Error signing in with Google:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+};
+
+/**
+ * Вход через Apple OAuth
+ */
+export const signInWithApple = async (): Promise<{ success: boolean; error?: string }> => {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Database not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'apple',
+      options: {
+        redirectTo: `${window.location.origin}${window.location.pathname}`,
+      },
+    });
+
+    if (error) {
+      console.error('❌ Apple OAuth error:', error);
+      return { success: false, error: error.message };
+    }
+
+    // OAuth редирект произойдет автоматически
+    return { success: true };
+  } catch (error) {
+    console.error('Error signing in with Apple:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+};
+
+/**
+ * Сохранение пола пользователя в профиле
+ */
+export const updateUserGender = async (
+  userId: string,
+  gender: 'male' | 'female' | 'prefer_not_to_say'
+): Promise<{ success: boolean; error?: string }> => {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Database not configured' };
+  }
+
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        gender: gender,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (error) {
+      console.error('❌ Error updating gender:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating gender:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 };

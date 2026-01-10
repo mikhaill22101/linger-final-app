@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mail, Lock, Phone, User, ArrowRight, Sparkles } from 'lucide-react';
+import { Mail, Lock, Phone, User, ArrowRight, Sparkles, Users } from 'lucide-react';
+import WebApp from '@twa-dev/sdk';
 import {
   signUpWithEmail,
   signInWithEmail,
   signInWithPhone,
   verifyPhoneOTP,
   signInWithTelegram,
+  signInWithGoogle,
+  signInWithApple,
   isAuthenticated,
   getCurrentUser,
 } from '../lib/auth-universal';
@@ -24,6 +27,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [gender, setGender] = useState<'male' | 'female' | null>(null); // Обязательное поле при регистрации
   const [otpCode, setOtpCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,18 +81,43 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
     try {
       let result;
       if (mode === 'register') {
+        console.log('🔄 Attempting registration with email:', email);
         result = await signUpWithEmail(email, password, fullName);
+        console.log('📝 Registration result:', result.success ? 'Success' : 'Failed', result.error || '');
       } else {
+        console.log('🔄 Attempting login with email:', email);
         result = await signInWithEmail(email, password);
+        console.log('📝 Login result:', result.success ? 'Success' : 'Failed', result.error || '');
       }
 
       if (result.success && result.user) {
+        console.log('✅ Authentication successful, user:', result.user.id);
         onAuthSuccess(result.user);
       } else {
-        setError(result.error || (isRussian ? 'Ошибка авторизации' : 'Authentication error'));
+        // Детальное сообщение об ошибке
+        const errorMsg = result.error || (isRussian ? 'Ошибка авторизации' : 'Authentication error');
+        console.error('❌ Authentication error:', errorMsg);
+        setError(errorMsg);
+        
+        // Показываем детальную ошибку пользователю через alert (если доступен)
+        if (window.Telegram?.WebApp?.showAlert) {
+          WebApp.showAlert(errorMsg);
+        } else {
+          // Fallback на стандартный alert
+          alert(errorMsg);
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('❌ Authentication exception:', err);
+      setError(errorMsg);
+      
+      // Показываем ошибку пользователю
+      if (window.Telegram?.WebApp?.showAlert) {
+        WebApp.showAlert(errorMsg);
+      } else {
+        alert(errorMsg);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -134,11 +163,24 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-purple-950 to-indigo-950 flex items-center justify-center p-4">
+    <div 
+      className="min-h-screen bg-gradient-to-br from-black via-purple-950 to-indigo-950 flex items-center justify-center p-4"
+      style={{
+        // Убеждаемся, что форма регистрации всегда отображается в обычном виде
+        // даже если родительский компонент перевернут в режиме Duo
+        transform: 'none',
+        backfaceVisibility: 'visible',
+      }}
+    >
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-md"
+        style={{
+          // Форма регистрации не должна вращаться вместе с интерфейсом
+          transform: 'none',
+          backfaceVisibility: 'visible',
+        }}
       >
         {/* Логотип/Заголовок */}
         <div className="text-center mb-8">
@@ -277,9 +319,47 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess }) => {
                 </div>
               </div>
 
+              {/* Обязательный выбор пола при регистрации */}
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-white/70 text-sm mb-2">
+                    {isRussian ? 'Пол' : 'Gender'} <span className="text-red-400">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setGender('male')}
+                      className={`py-3 rounded-xl text-sm font-medium transition-all ${
+                        gender === 'male'
+                          ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
+                          : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isRussian ? 'Мужчина' : 'Male'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGender('female')}
+                      className={`py-3 rounded-xl text-sm font-medium transition-all ${
+                        gender === 'female'
+                          ? 'bg-purple-500/30 text-white border-2 border-purple-400/50'
+                          : 'bg-white/5 text-white/60 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isRussian ? 'Женщина' : 'Female'}
+                    </button>
+                  </div>
+                  {!gender && (
+                    <p className="text-red-400/80 text-xs mt-1">
+                      {isRussian ? 'Пожалуйста, выберите пол' : 'Please select gender'}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || (mode === 'register' && !gender)}
                 className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 py-3 rounded-xl text-white font-medium flex items-center justify-center gap-2 hover:shadow-lg hover:shadow-purple-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
