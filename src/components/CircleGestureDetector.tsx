@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { trackEvent } from '../lib/analytics';
 
 interface CircleGestureDetectorProps {
   onCircleComplete: (center: { x: number; y: number }) => void;
@@ -21,15 +22,38 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const [circleCenter, setCircleCenter] = useState<{ x: number; y: number } | null>(null);
   const [circleRadius, setCircleRadius] = useState(0);
+  const [circleProgress, setCircleProgress] = useState(0); // 0-1
+  const [showCenterTarget, setShowCenterTarget] = useState(false);
+  const [hasTriggered75Percent, setHasTriggered75Percent] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const gestureStartTimeRef = useRef<number | null>(null);
   const lastPointRef = useRef<Point | null>(null);
+  const centerTargetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pathLengthRef = useRef<number>(0);
+
+  // Минимальный радиус круга (20-25% ширины экрана)
+  const getMinRadius = (): number => {
+    if (!containerRef.current) return 100;
+    const width = containerRef.current.getBoundingClientRect().width;
+    return width * 0.2; // 20% ширины экрана
+  };
+
+  // Минимальная длина пути (75% окружности)
+  const getMinPathLength = (radius: number): number => {
+    return 2 * Math.PI * radius * 0.75; // 75% окружности
+  };
 
   // Функция проверки, является ли траектория круговой
-  const isCircularGesture = (points: Point[]): { isCircle: boolean; center: { x: number; y: number } | null; radius: number } => {
+  const isCircularGesture = (points: Point[]): { 
+    isCircle: boolean; 
+    center: { x: number; y: number } | null; 
+    radius: number;
+    progress: number;
+    pathLength: number;
+  } => {
     if (points.length < 10) {
-      return { isCircle: false, center: null, radius: 0 };
+      return { isCircle: false, center: null, radius: 0, progress: 0, pathLength: 0 };
     }
 
     // Вычисляем центр точек (среднее арифметическое)
@@ -44,18 +68,38 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
     });
     const avgRadius = distances.reduce((sum, d) => sum + d, 0) / distances.length;
 
+    // Проверяем минимальный радиус
+    const minRadius = getMinRadius();
+    if (avgRadius < minRadius) {
+      return { isCircle: false, center: null, radius: 0, progress: 0, pathLength: 0 };
+    }
+
+    // Вычисляем длину пути
+    let pathLength = 0;
+    for (let i = 1; i < points.length; i++) {
+      const dx = points[i].x - points[i - 1].x;
+      const dy = points[i].y - points[i - 1].y;
+      pathLength += Math.sqrt(dx * dx + dy * dy);
+    }
+
     // Проверяем, что все точки примерно на одинаковом расстоянии от центра
     const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgRadius, 2), 0) / distances.length;
     const stdDev = Math.sqrt(variance);
     const coefficientOfVariation = avgRadius > 0 ? stdDev / avgRadius : 1;
 
     // Проверяем, что траектория достаточно круглая (коэффициент вариации < 0.3)
-    const isCircle = coefficientOfVariation < 0.3 && avgRadius > 50 && avgRadius < 400;
+    const isCircle = coefficientOfVariation < 0.3 && avgRadius >= minRadius && avgRadius < 400;
+
+    // Вычисляем прогресс (длина пути / минимальная требуемая длина)
+    const minPathLength = getMinPathLength(avgRadius);
+    const progress = Math.min(pathLength / minPathLength, 1);
 
     return {
       isCircle,
       center: isCircle ? { x: avgX, y: avgY } : null,
-      radius: isCircle ? avgRadius : 0
+      radius: isCircle ? avgRadius : 0,
+      progress,
+      pathLength,
     };
   };
 
@@ -93,9 +137,16 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
       lastPointRef.current = { x, y, timestamp: Date.now() };
       setCircleCenter(null);
       setCircleRadius(0);
+      setCircleProgress(0);
+      setShowCenterTarget(false);
+      setHasTriggered75Percent(false);
+      pathLengthRef.current = 0;
       
       // Очищаем canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Analytics
+      trackEvent('mode_switch_gesture_started');
     };
 
     const handleMove = (x: number, y: number) => {
@@ -103,7 +154,7 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
 
       const now = Date.now();
       
-      // Проверяем минимальное расстояние между точками (чтобы избежать скопления точек)
+      // Проверяем минимальное расстояние между точками
       if (lastPointRef.current) {
         const dx = x - lastPointRef.current.x;
         const dy = y - lastPointRef.current.y;
@@ -116,40 +167,99 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
       lastPointRef.current = newPoint;
       setPoints([...currentPoints]);
 
-      // Отрисовываем траекторию
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
+      // Вычисляем длину пути
       if (currentPoints.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(currentPoints[currentPoints.length - 2].x, currentPoints[currentPoints.length - 2].y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+        const dx = x - currentPoints[currentPoints.length - 2].x;
+        const dy = y - currentPoints[currentPoints.length - 2].y;
+        pathLengthRef.current += Math.sqrt(dx * dx + dy * dy);
       }
 
-      // Проверяем, является ли жесть круговым (каждые 20 точек)
-      if (currentPoints.length % 20 === 0 && currentPoints.length >= 20) {
-        const check = isCircularGesture(currentPoints);
-        if (check.isCircle && check.center) {
-          setCircleCenter(check.center);
-          setCircleRadius(check.radius);
-          
-          // Рисуем центр круга
-          ctx.fillStyle = 'rgba(168, 85, 247, 0.8)';
+      // Проверяем минимальную длительность (500ms)
+      const duration = now - (gestureStartTimeRef.current || now);
+      if (duration < 500) return;
+
+      // Проверяем максимальную длительность (4s)
+      if (duration > 4000) {
+        handleEnd();
+        return;
+      }
+
+      // Отрисовываем траекторию с визуальной обратной связью
+      const check = isCircularGesture(currentPoints);
+      setCircleProgress(check.progress);
+
+      if (check.isCircle && check.center) {
+        setCircleCenter(check.center);
+        setCircleRadius(check.radius);
+        pathLengthRef.current = check.pathLength;
+
+        // Визуальная обратная связь: мягкое свечение вдоль пути
+        ctx.strokeStyle = `rgba(168, 85, 247, ${0.4 + check.progress * 0.4})`;
+        ctx.lineWidth = 3 + check.progress * 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowBlur = 10 * check.progress;
+        ctx.shadowColor = 'rgba(168, 85, 247, 0.8)';
+        
+        if (currentPoints.length > 1) {
           ctx.beginPath();
-          ctx.arc(check.center.x, check.center.y, 8, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.moveTo(currentPoints[currentPoints.length - 2].x, currentPoints[currentPoints.length - 2].y);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        }
+
+        // При достижении 75% - хаптик и визуальная обратная связь
+        if (check.progress >= 0.75 && !hasTriggered75Percent) {
+          setHasTriggered75Percent(true);
           
-          // Рисуем окружность
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
+          // Haptic feedback
+          if (window.Telegram?.WebApp?.HapticFeedback) {
+            try {
+              window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+            } catch (e) {
+              console.warn('Haptic error:', e);
+            }
+          }
+
+          // Analytics
+          trackEvent('mode_switch_gesture_75_percent');
+
+          // Показываем центр-таргет
+          setShowCenterTarget(true);
+
+          // Рисуем мягкое свечение в центре
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.6)';
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = 'rgba(168, 85, 247, 1)';
+          ctx.beginPath();
+          ctx.arc(check.center.x, check.center.y, 12, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+
+        // Рисуем окружность при прогрессе > 75%
+        if (check.progress >= 0.75) {
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
           ctx.lineWidth = 2;
           ctx.setLineDash([5, 5]);
           ctx.beginPath();
           ctx.arc(check.center.x, check.center.y, check.radius, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
+        }
+      } else {
+        // Обычная отрисовка пути
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowBlur = 0;
+        
+        if (currentPoints.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(currentPoints[currentPoints.length - 2].x, currentPoints[currentPoints.length - 2].y);
+          ctx.lineTo(x, y);
+          ctx.stroke();
         }
       }
     };
@@ -159,63 +269,97 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
       isActive = false;
       setIsDrawing(false);
 
-      // Проверяем финальную траекторию
-      if (currentPoints.length >= 20) {
-        const check = isCircularGesture(currentPoints);
-        if (check.isCircle && check.center) {
-          // Жест завершен, ждем нажатия в центр
-          setCircleCenter(check.center);
-          setCircleRadius(check.radius);
-          
-          // Рисуем финальный круг и центр
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.8)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(check.center.x, check.center.y, check.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          
-          ctx.fillStyle = 'rgba(168, 85, 247, 1)';
-          ctx.beginPath();
-          ctx.arc(check.center.x, check.center.y, 12, 0, Math.PI * 2);
-          ctx.fill();
-          
-          // Сохраняем центр для последующего клика
-          setTimeout(() => {
-            if (circleCenter) {
-              // Очищаем canvas через 2 секунды, если не было нажатия
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              setCircleCenter(null);
-              setCircleRadius(0);
-              setPoints([]);
-            }
-          }, 2000);
-        } else {
-          // Жест не является круговым, очищаем
-          setTimeout(() => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            setPoints([]);
-            setCircleCenter(null);
-            setCircleRadius(0);
-          }, 500);
-        }
-      } else {
-        // Недостаточно точек, очищаем
+      // Проверяем минимальную длительность
+      const duration = gestureStartTimeRef.current 
+        ? Date.now() - gestureStartTimeRef.current 
+        : 0;
+      
+      if (duration < 500) {
+        // Слишком быстро - игнорируем
         setTimeout(() => {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           setPoints([]);
           setCircleCenter(null);
           setCircleRadius(0);
+          setCircleProgress(0);
+          setShowCenterTarget(false);
+          setHasTriggered75Percent(false);
+        }, 300);
+        return;
+      }
+
+      // Проверяем финальную траекторию
+      if (currentPoints.length >= 20) {
+        const check = isCircularGesture(currentPoints);
+        if (check.isCircle && check.center && check.progress >= 0.75) {
+          // Жест завершен, показываем центр-таргет
+          setCircleCenter(check.center);
+          setCircleRadius(check.radius);
+          setCircleProgress(check.progress);
+          setShowCenterTarget(true);
+
+          // Рисуем финальный круг и центр
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.8)';
+          ctx.lineWidth = 3;
+          ctx.shadowBlur = 15;
+          ctx.shadowColor = 'rgba(168, 85, 247, 0.8)';
+          ctx.beginPath();
+          ctx.arc(check.center.x, check.center.y, check.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.9)';
+          ctx.shadowBlur = 20;
+          ctx.beginPath();
+          ctx.arc(check.center.x, check.center.y, 16, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          // Устанавливаем таймаут для скрытия центра-таргета (5 секунд)
+          if (centerTargetTimeoutRef.current) {
+            clearTimeout(centerTargetTimeoutRef.current);
+          }
+          centerTargetTimeoutRef.current = setTimeout(() => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            setCircleCenter(null);
+            setCircleRadius(0);
+            setCircleProgress(0);
+            setShowCenterTarget(false);
+            setHasTriggered75Percent(false);
+            trackEvent('mode_switch_switch_cancelled', { reason: 'timeout' });
+          }, 5000);
+        } else {
+          // Жест не является круговым или недостаточный прогресс
+          setTimeout(() => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            setPoints([]);
+            setCircleCenter(null);
+            setCircleRadius(0);
+            setCircleProgress(0);
+            setShowCenterTarget(false);
+            setHasTriggered75Percent(false);
+          }, 500);
+        }
+      } else {
+        // Недостаточно точек
+        setTimeout(() => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          setPoints([]);
+          setCircleCenter(null);
+          setCircleRadius(0);
+          setCircleProgress(0);
+          setShowCenterTarget(false);
+          setHasTriggered75Percent(false);
         }, 300);
       }
     };
 
     // Обработка клика в центр круга
     const handleClick = (e: MouseEvent | TouchEvent) => {
-      if (!circleCenter || !enabled) return;
+      if (!circleCenter || !enabled || !showCenterTarget) return;
 
-      const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
-      const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
+      const clientX = 'touches' in e ? e.touches[0]?.clientX : (e as MouseEvent).clientX;
+      const clientY = 'touches' in e ? e.touches[0]?.clientY : (e as MouseEvent).clientY;
       
       if (!clientX || !clientY) return;
 
@@ -223,18 +367,30 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
       const x = clientX - rect.left;
       const y = clientY - rect.top;
 
-      // Проверяем, клик в пределах радиуса от центра
+      // Проверяем, клик в пределах радиуса от центра (с запасом)
       const dx = x - circleCenter.x;
       const dy = y - circleCenter.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
-      if (distance <= circleRadius * 1.2) {
-        // Клик в центр - активируем режим
+      // Увеличиваем зону клика для удобства (до 1.5 радиуса)
+      if (distance <= circleRadius * 1.5) {
+        // Клик в центр - активируем переключение
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Analytics
+        trackEvent('mode_switch_center_tap_confirmed');
+        
         onCircleComplete(circleCenter);
         setCircleCenter(null);
         setCircleRadius(0);
-        setPoints([]);
+        setCircleProgress(0);
+        setShowCenterTarget(false);
+        setHasTriggered75Percent(false);
+        
+        if (centerTargetTimeoutRef.current) {
+          clearTimeout(centerTargetTimeoutRef.current);
+          centerTargetTimeoutRef.current = null;
+        }
       }
     };
 
@@ -301,8 +457,12 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
       container.removeEventListener('click', handleClick);
+      
+      if (centerTargetTimeoutRef.current) {
+        clearTimeout(centerTargetTimeoutRef.current);
+      }
     };
-  }, [enabled, circleCenter, circleRadius, onCircleComplete]);
+  }, [enabled, circleCenter, circleRadius, showCenterTarget, hasTriggered75Percent, onCircleComplete]);
 
   return (
     <div
@@ -315,21 +475,36 @@ export const CircleGestureDetector: React.FC<CircleGestureDetectorProps> = ({
         className="absolute inset-0"
         style={{ pointerEvents: enabled ? 'auto' : 'none' }}
       />
-      {/* Индикатор центра круга */}
+      {/* Индикатор центра круга с анимацией */}
       <AnimatePresence>
-        {circleCenter && (
+        {showCenterTarget && circleCenter && (
           <motion.div
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            className="absolute w-6 h-6 rounded-full bg-purple-500 border-2 border-white"
+            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+            className="absolute rounded-full bg-gradient-to-br from-purple-500 to-indigo-500 border-2 border-white shadow-lg shadow-purple-500/50 pointer-events-auto cursor-pointer"
             style={{
               left: `${circleCenter.x}px`,
               top: `${circleCenter.y}px`,
+              width: '32px',
+              height: '32px',
               transform: 'translate(-50%, -50%)',
-              pointerEvents: 'auto',
             }}
-          />
+            onClick={(e) => {
+              e.stopPropagation();
+              if (circleCenter) {
+                trackEvent('mode_switch_center_tap_confirmed');
+                onCircleComplete(circleCenter);
+                setShowCenterTarget(false);
+                setCircleCenter(null);
+              }
+            }}
+          >
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-2 h-2 rounded-full bg-white" />
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

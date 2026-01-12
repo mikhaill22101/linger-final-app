@@ -172,7 +172,7 @@ async function getAddress(lat: number, lng: number): Promise<string> {
 }
 
 // Оптимизированная загрузка импульсов: limit(50) и без адресов на старте
-async function loadImpulses(): Promise<ImpulseLocation[]> {
+async function loadImpulses(modeFilter: 'group' | 'together' | 'both' = 'both'): Promise<ImpulseLocation[]> {
   try {
     // Проверка подключения к Supabase
     if (!isSupabaseConfigured) {
@@ -181,11 +181,21 @@ async function loadImpulses(): Promise<ImpulseLocation[]> {
     }
 
     console.log('[loadImpulses] Запрос данных из Supabase (limit 50)...');
-    const { data, error } = await supabase
+    
+    let query = supabase
       .from('impulses')
       .select('id, content, category, creator_id, created_at, location_lat, location_lng, event_date, event_time, is_duo_event, selected_participant_id')
       .order('created_at', { ascending: false })
       .limit(50);
+    
+    // Фильтруем по режиму
+    if (modeFilter === 'group') {
+      query = query.eq('is_duo_event', false);
+    } else if (modeFilter === 'together') {
+      query = query.eq('is_duo_event', true);
+    }
+    
+    const { data, error } = await query;
 
     if (error) {
       console.error('❌ [loadImpulses] Ошибка Supabase:', error);
@@ -433,7 +443,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
 
             // Загружаем данные из Supabase после отрисовки карты
             console.log('[MapScreen] Загрузка импульсов из Supabase...');
-            const loadedImpulses = await loadImpulses();
+            const loadedImpulses = await loadImpulses(modeFilter);
             setImpulses(loadedImpulses);
             
             console.log(`[MapScreen] Загружено ${loadedImpulses.length} импульсов`);
@@ -816,7 +826,7 @@ const MapScreen: React.FC<MapScreenProps> = ({ activeCategory, refreshTrigger, i
               }, 200);
             }
 
-                const loadedImpulses = await loadImpulses();
+                const loadedImpulses = await loadImpulses(modeFilter);
                 setImpulses(loadedImpulses);
                 
                 // Обновляем близлежащие события и определяем ближайшее для анимации

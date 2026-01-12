@@ -132,6 +132,17 @@ const categories = [
       ru: 'Помощь, обмен и соседские добрые дела', 
       en: 'Help, swap and neighborhood kind vibes' 
     }
+  },
+  { 
+    id: 'netflix', 
+    icon: Film, 
+    label: { ru: 'Netflix and Chill', en: 'Netflix and Chill' }, 
+    color: 'from-red-400/20 to-pink-600/20',
+    border: 'border-red-500/30',
+    text: { 
+      ru: 'Без группы, без спешки', 
+      en: 'No group, no rush' 
+    }
   }
 ];
 
@@ -191,9 +202,26 @@ function App() {
   const [eventsSearchQuery, setEventsSearchQuery] = useState(''); // Поиск по событиям в разделе "Ближайшие события"
   const eventsSearchInputRef = useRef<HTMLInputElement>(null); // Ref для поля поиска событий
 
-  // Linger Duo режим
-  const { isDuoMode, activateDuoMode, deactivateDuoMode } = useLingerDuo();
+  // Mode filter (Group/Together/Both)
+  const { modeFilter, setModeFilter, isDuoMode, activateDuoMode, deactivateDuoMode, isTogetherMode, isGroupMode } = useLingerDuo();
   const [isFlipping, setIsFlipping] = useState(false); // Анимация разворота экрана
+  const [showGestureOnboarding, setShowGestureOnboarding] = useState(false);
+  
+  // Check if gesture onboarding should be shown
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem('gesture_onboarding_seen');
+      if (!seen && activeTab === 'map') {
+        // Show onboarding after a short delay
+        const timer = setTimeout(() => {
+          setShowGestureOnboarding(true);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    } catch (e) {
+      console.warn('Failed to check gesture onboarding:', e);
+    }
+  }, [activeTab]);
   const [duoEventRequests, setDuoEventRequests] = useState<DuoEventRequest[]>([]); // Запросы на участие в Duo-событии
   const [isLoadingDuoRequests, setIsLoadingDuoRequests] = useState(false); // Загрузка запросов
   const [duoEventGenderFilter, setDuoEventGenderFilter] = useState<'male' | 'female' | 'all'>('all'); // Фильтр по полу для запросов
@@ -508,15 +536,15 @@ function App() {
               .eq('id', String(existingProfile.id)); // Используем существующий UUID
           } else if (!existingProfile) {
             // Новый OAuth пользователь - создаем профиль
+            // created_at управляется автоматически через триггеры, не устанавливаем его вручную
             await supabase
               .from('profiles')
               .upsert({
-                id: String(session.user.id), // UUID из Supabase Auth
+                id: String(session.user.id), // Явное приведение UUID к строке ::text
                 email: userEmail.toLowerCase().trim(), // email как основной логический ключ
                 full_name: session.user.user_metadata?.full_name || null,
                 avatar_url: session.user.user_metadata?.avatar_url || null,
                 gender: null, // Пользователь должен выбрать пол позже
-                created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               }, {
                 onConflict: 'id',
@@ -538,8 +566,8 @@ function App() {
     // Инициализация Telegram WebApp (если доступен)
     if (typeof window !== 'undefined' && window.Telegram?.WebApp) {
       try {
-        WebApp.ready();
-        WebApp.expand();
+    WebApp.ready();
+    WebApp.expand();
       } catch (e) {
         console.warn('Telegram WebApp not available:', e);
       }
@@ -787,11 +815,22 @@ function App() {
         return;
       }
 
-      // Загружаем все активные impulses, включая Duo-события
-      const { data, error } = await supabase
+      // Загружаем impulses с фильтрацией по режиму
+      let query = supabase
         .from('impulses')
         .select('*, event_date, event_time, address, is_duo_event, selected_participant_id')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(100);
+      
+      // Фильтруем по режиму
+      if (modeFilter === 'group') {
+        query = query.eq('is_duo_event', false);
+      } else if (modeFilter === 'together') {
+        query = query.eq('is_duo_event', true);
+      }
+      // Если modeFilter === 'both', не добавляем фильтр
+      
+      const { data, error } = await query;
 
       if (error) {
         console.error('❌ Error loading feed from Supabase:', error);
@@ -1319,11 +1358,16 @@ function App() {
     return date.toLocaleDateString(isRussian ? 'ru-RU' : 'en-US', { day: 'numeric', month: 'short' });
   };
 
-  // Обработчик активации режима Linger Duo через жест
-  const handleCircleGestureComplete = (center: { x: number; y: number }) => {
+  // Обработчик активации режима через жест (переключение между Group и Together)
+  const handleCircleGestureComplete = (_center: { x: number; y: number }) => {
+    // Переключаем между Group и Together
+    const newMode: ModeFilterType = modeFilter === 'together' ? 'group' : 
+                                    modeFilter === 'group' ? 'together' : 
+                                    'together'; // Если 'both', переключаем на 'together'
+    
     setIsFlipping(true);
     
-    // Haptic feedback для активации Duo режима
+    // Haptic feedback
     if (window.Telegram?.WebApp?.HapticFeedback) {
       try {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
@@ -1332,15 +1376,18 @@ function App() {
       }
     }
     
+    // Analytics
+    trackEvent('mode_switch_completed', { mode: newMode, method: 'gesture' });
+    
     setTimeout(() => {
-      activateDuoMode();
+      setModeFilter(newMode);
       setIsFlipping(false);
       
-      // Обновляем карту после разворота, чтобы она корректно отображалась
+      // Обновляем карту после переключения
       setTimeout(() => {
         setMapRefreshTrigger(prev => prev + 1);
-      }, 300); // Даем время на завершение анимации
-    }, 600); // Половина длительности анимации (1.2s / 2)
+      }, 300);
+    }, 600);
   };
 
   // Обработчик выхода из режима Duo

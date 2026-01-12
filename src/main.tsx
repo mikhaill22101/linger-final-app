@@ -3,8 +3,25 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { LingerDuoProvider } from './context/LingerDuoContext.tsx'
+import { telegramWebApp } from './lib/telegram.ts'
 
 console.log('main.tsx: Starting application...');
+
+// Initialize Telegram WebApp if available
+if (telegramWebApp.isTelegramAvailable()) {
+  console.log('main.tsx: Telegram WebApp detected');
+  
+  // Apply Telegram theme immediately
+  telegramWebApp.applyTheme();
+  
+  // Listen for theme changes
+  telegramWebApp.onThemeChange((theme) => {
+    console.log('main.tsx: Theme changed to', theme);
+    telegramWebApp.applyTheme();
+  });
+} else {
+  console.log('main.tsx: Running in regular browser mode');
+}
 
 try {
   const rootElement = document.getElementById('root');

@@ -10,6 +10,9 @@ export interface AuthUser {
   full_name?: string;
   avatar_url?: string;
   gender?: 'male' | 'female' | 'prefer_not_to_say' | null; // Пол пользователя (обязателен для доступа к приложению)
+  isPremium?: boolean; // Premium status (frontend only)
+  // TODO: Backend validation required - verify is_premium from profiles table
+  // Security: Never trust frontend flag, always verify on backend before granting premium features
 }
 
 export interface AuthSession {
@@ -91,6 +94,8 @@ export const getCurrentUser = async (): Promise<AuthUser | null> => {
       full_name: profile?.full_name || user.user_metadata?.full_name,
       avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url,
       gender: profile?.gender || null, // Пол обязателен для доступа к приложению
+      isPremium: false, // TODO: Backend integration - fetch is_premium from profiles table
+      // Currently defaulting to false. Backend must verify before granting premium features.
     };
   } catch (error) {
     console.error('Error getting current user:', error);
@@ -105,7 +110,9 @@ export const signUpWithEmail = async (
   email: string,
   password: string,
   fullName?: string,
-  gender?: 'male' | 'female' | 'prefer_not_to_say' | null
+  gender?: 'male' | 'female' | 'prefer_not_to_say' | null,
+  dateOfBirth?: string,
+  ageConfirmed?: boolean
 ): Promise<{ success: boolean; user?: AuthUser; error?: string }> => {
   if (!isSupabaseConfigured) {
     return { success: false, error: 'Database not configured' };
@@ -167,6 +174,32 @@ export const signUpWithEmail = async (
       console.log('ℹ️ Found existing profile by email, linking accounts:', profileId);
     }
 
+    // Проверка возраста - обязательна для регистрации
+    if (!ageConfirmed) {
+      return { success: false, error: 'Age confirmation is required. You must confirm you are 18+' };
+    }
+    
+    if (!dateOfBirth) {
+      return { success: false, error: 'Date of birth is required for registration' };
+    }
+    
+    // Проверка возраста
+    const birthDate = new Date(dateOfBirth);
+    const today = new Date();
+    
+    // Проверка валидности даты
+    if (birthDate > today) {
+      return { success: false, error: 'Date of birth cannot be in the future' };
+    }
+    
+    const age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    const actualAge = monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate()) ? age - 1 : age;
+    
+    if (actualAge < 18) {
+      return { success: false, error: 'Access is allowed only for users aged 18 and above' };
+    }
+
     // Создаем или обновляем профиль пользователя
     // Примечание: Триггер handle_new_user может уже создать профиль автоматически,
     // поэтому используем upsert для обновления существующего или создания нового
@@ -180,6 +213,7 @@ export const signUpWithEmail = async (
     
     console.log('💾 Saving profile with gender:', genderToSave, 'profileId:', String(profileId));
     
+    const now = new Date().toISOString();
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
@@ -187,7 +221,11 @@ export const signUpWithEmail = async (
         email: email.toLowerCase().trim(), // email как основной логический ключ для связывания аккаунтов
         full_name: fullName || null,
         gender: genderToSave, // Сохраняем переданный gender при регистрации ('male' или 'female')
-        updated_at: new Date().toISOString(),
+        date_of_birth: dateOfBirth || null,
+        age_confirmed: ageConfirmed || false,
+        age_confirmed_at: ageConfirmed ? now : null,
+        terms_accepted_at: ageConfirmed ? now : null, // Terms accepted at the same time as age confirmation
+        updated_at: now,
       }, {
         onConflict: 'id',
       });

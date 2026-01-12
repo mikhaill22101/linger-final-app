@@ -1,12 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, isSupabaseConfigured, checkSupabaseConnection } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search, Settings, Bell, Globe, LogOut, User } from 'lucide-react';
+import { Trash2, Clock, X, Sparkles, UserPlus, UserMinus, MessageCircle, Search, Settings, Bell, Globe, LogOut, User, UserX } from 'lucide-react';
+import { PremiumCrownIcon } from './PremiumCrownIcon';
 import WebApp from '@twa-dev/sdk';
 import { getSmartIcon } from '../lib/smartIcon';
 import { notifyFriendAdded } from '../lib/notifications';
 import { syncUserProfile } from '../lib/auth';
 import { getCurrentUser, getUserId } from '../lib/auth-universal';
+import { deleteUserAccount } from '../lib/account-deletion';
+import { TermsOfService } from './TermsOfService';
+import { PrivacyPolicy } from './PrivacyPolicy';
+import { AvatarSkeleton } from './SkeletonLoader';
+import { triggerHapticFeedback } from '../lib/haptic-feedback';
 
 interface TelegramUser {
   id?: number;
@@ -22,6 +28,10 @@ interface ProfileState {
   bio: string;
   telegramId?: number;
   gender?: 'male' | 'female' | 'prefer_not_to_say' | null;
+  isPremium?: boolean; // Premium status (frontend-only flag, default false)
+  // TODO: Backend integration - fetch is_premium from profiles table
+  // Security: Never trust frontend flag, always verify on backend before granting premium features
+  // This flag is for visual indication only. Backend validation is mandatory for any premium functionality.
 }
 
 interface MyImpulse {
@@ -44,6 +54,9 @@ const Profile: React.FC = () => {
     telegramId: undefined,
     telegram_username: undefined,
     gender: null,
+    isPremium: false, // Default to false, will be loaded from getCurrentUser()
+    // TODO: Backend integration - load is_premium from profiles table via getCurrentUser
+    // This is a frontend-only visual indicator. Backend must verify premium status for any premium features.
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -85,6 +98,10 @@ const Profile: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false); // Модальное окно настроек
   const [notificationsEnabled, setNotificationsEnabled] = useState(true); // Уведомления вкл/выкл
   const [language, setLanguage] = useState<'ru' | 'en'>('ru'); // Язык интерфейса
+  const [showTermsOfService, setShowTermsOfService] = useState(false);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // Загрузка профиля из базы данных
   // Обновление last_seen при активности пользователя
@@ -169,6 +186,27 @@ const Profile: React.FC = () => {
                 firstName: data.full_name || prev.firstName,
                 photoUrl: data.avatar_url || prev.photoUrl,
                 gender: data.gender || null,
+                // TODO: Backend integration - set isPremium from data.is_premium when available
+                // isPremium: data.is_premium || false,
+                isPremium: false, // Default to false until backend integration
+                // Security: This is a frontend-only visual indicator. Backend must verify premium status for any premium features.
+              }));
+            }
+          } else {
+            // If not Telegram user, try to load via getCurrentUser (for Email/Phone/Google/Apple users)
+            // TODO: Backend integration - getCurrentUser should fetch is_premium from profiles table
+            // Security: This is a frontend-only visual indicator. Backend must verify premium status for any premium features.
+            const currentUser = await getCurrentUser();
+            if (currentUser) {
+              setProfile((prev) => ({
+                ...prev,
+                id: currentUser.id,
+                firstName: currentUser.full_name || prev.firstName,
+                email: currentUser.email,
+                phone: currentUser.phone,
+                avatar_url: currentUser.avatar_url,
+                gender: currentUser.gender || null,
+                isPremium: currentUser.isPremium || false, // Load from AuthUser interface (frontend-only flag)
               }));
             }
           }
@@ -1311,34 +1349,44 @@ const Profile: React.FC = () => {
                 <p className="text-xs uppercase tracking-[0.25em] text-white/40">PROFILE</p>
                 <h1 className="mt-1 text-2xl font-light tracking-wide">LINGER</h1>
               </div>
-              <span className="inline-flex h-8 items-center rounded-full border border-white/10 px-3 text-[10px] uppercase tracking-[0.2em] text-white/50">
-                Mini App
-              </span>
+              {/* Removed "Mini App" label for App Store/Google Play compliance */}
             </div>
 
             {/* Avatar + main info */}
             <div className="flex items-center gap-4">
               <div className="relative h-16 w-16 shrink-0">
                 <div className="absolute inset-0 rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-fuchsia-500 blur-md opacity-60" />
-                <button
-                  onClick={handleAvatarClick}
-                  disabled={!profile.photoUrl}
-                  className={`relative flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-black/80 overflow-hidden ${
-                    profile.photoUrl ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''
-                  }`}
-                >
-                  {profile.photoUrl ? (
-                    <img
-                      src={profile.photoUrl}
-                      alt={profile.firstName || profile.username || 'User avatar'}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xl font-medium text-white/80">
-                      {initials}
-                    </span>
-                  )}
-                </button>
+                {isLoading ? (
+                  <AvatarSkeleton size={64} />
+                ) : (
+                  <button
+                    onClick={handleAvatarClick}
+                    disabled={!profile.photoUrl}
+                    className={`relative flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-black/80 overflow-hidden ${
+                      profile.photoUrl ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''
+                    }`}
+                  >
+                    {profile.photoUrl ? (
+                      <img
+                        src={profile.photoUrl}
+                        alt={profile.firstName || profile.username || 'User avatar'}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xl font-medium text-white/80">
+                        {initials}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {/* Premium Crown Icon - visible only when user.isPremium === true */}
+                {/* TODO: Backend integration - verify is_premium from profiles table before displaying */}
+                {/* Security: This is a frontend-only visual indicator. Backend must verify premium status for any premium features. */}
+                {profile.isPremium && (
+                  <div className="absolute -top-1 -right-1 bg-yellow-500 rounded-full p-1 shadow-lg z-10">
+                    <PremiumCrownIcon size={16} className="text-yellow-900" />
+                  </div>
+                )}
                 {/* Кнопка изменения фото */}
                 <button
                   onClick={handleChangePhoto}
@@ -2907,6 +2955,90 @@ const Profile: React.FC = () => {
                 </div>
               </div>
 
+              {/* Раздел: О приложении и правовая информация */}
+              <div className="space-y-4 mb-6 pb-6 border-b border-white/10">
+                <div className="flex items-center gap-3 mb-3">
+                  <Globe size={18} className="text-white/70" />
+                  <h3 className="text-sm font-medium text-white/90">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'О приложении' : 'About';
+                    })()}
+                  </h3>
+                </div>
+                <div className="ml-8 space-y-3">
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian
+                        ? 'Приложение является технической платформой для общения пользователей. Администрация не участвует в личных встречах и не несёт ответственности за последствия офлайн-взаимодействий. Пользователь несёт личную ответственность за соблюдение законов и правил сообщества.'
+                        : 'This app is a technical communication platform. The administration does not participate in offline meetings and is not responsible for the consequences of users\' offline interactions. Users are personally responsible for complying with laws and community rules.';
+                    })()}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => {
+                        setShowTermsOfService(true);
+                        setShowSettings(false);
+                      }}
+                      className="text-left text-xs text-purple-400 hover:text-purple-300 underline"
+                    >
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Условия использования' : 'Terms of Service';
+                      })()}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowPrivacyPolicy(true);
+                        setShowSettings(false);
+                      }}
+                      className="text-left text-xs text-purple-400 hover:text-purple-300 underline"
+                    >
+                      {(() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Политика конфиденциальности' : 'Privacy Policy';
+                      })()}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Раздел: Удаление аккаунта */}
+              <div className="space-y-4 mb-6 pb-6 border-b border-white/10">
+                <div className="flex items-center gap-3 mb-3">
+                  <UserX size={18} className="text-red-400" />
+                  <h3 className="text-sm font-medium text-red-400">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Удаление аккаунта' : 'Account Deletion';
+                    })()}
+                  </h3>
+                </div>
+                <div className="ml-8 space-y-3">
+                  <p className="text-xs text-white/60 leading-relaxed">
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian
+                        ? 'При удалении аккаунта все ваши персональные данные будут безвозвратно удалены. Это действие нельзя отменить.'
+                        : 'Deleting your account will permanently delete all your personal data. This action cannot be undone.';
+                    })()}
+                  </p>
+                  <button
+                    onClick={() => {
+                      setShowDeleteAccountConfirm(true);
+                      setShowSettings(false);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-colors text-sm font-medium"
+                  >
+                    {(() => {
+                      const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                      return isRussian ? 'Удалить аккаунт' : 'Delete Account';
+                    })()}
+                  </button>
+                </div>
+              </div>
+
               {/* Раздел: Выйти из аккаунта */}
               <div className="space-y-4">
                 <button
@@ -2932,6 +3064,153 @@ const Profile: React.FC = () => {
                       return isRussian ? 'Выйти из аккаунта' : 'Log Out';
                     })()}
                   </span>
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {/* Terms of Service Modal */}
+        {showTermsOfService && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black z-[2000] overflow-y-auto"
+          >
+            <TermsOfService
+              onBack={() => {
+                setShowTermsOfService(false);
+                setShowSettings(true);
+              }}
+            />
+          </motion.div>
+        )}
+
+        {/* Privacy Policy Modal */}
+        {showPrivacyPolicy && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black z-[2000] overflow-y-auto"
+          >
+            <PrivacyPolicy
+              onBack={() => {
+                setShowPrivacyPolicy(false);
+                setShowSettings(true);
+              }}
+            />
+          </motion.div>
+        )}
+
+        {/* Delete Account Confirmation Modal */}
+        {showDeleteAccountConfirm && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDeleteAccountConfirm(false)}
+              className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[1990]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 rounded-3xl border border-red-500/30 p-6 z-[1991] max-w-md mx-auto"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+              }}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <UserX size={24} className="text-red-400" />
+                <h2 className="text-xl font-semibold text-white">
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Удаление аккаунта' : 'Delete Account';
+                  })()}
+                </h2>
+              </div>
+
+              <p className="text-sm text-white/70 mb-6 leading-relaxed">
+                {(() => {
+                  const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                  return isRussian
+                    ? 'Вы уверены, что хотите удалить аккаунт? Все ваши данные будут безвозвратно удалены, включая профиль, сообщения, события и другую информацию. Это действие нельзя отменить.'
+                    : 'Are you sure you want to delete your account? All your data will be permanently deleted, including your profile, messages, events, and other information. This action cannot be undone.';
+                })()}
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeleteAccountConfirm(false)}
+                  disabled={isDeletingAccount}
+                  className="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/20 text-white hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {(() => {
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                    return isRussian ? 'Отмена' : 'Cancel';
+                  })()}
+                </button>
+                <button
+                  onClick={async () => {
+                    setIsDeletingAccount(true);
+                    const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+
+                    try {
+                      const result = await deleteUserAccount();
+                      
+                      if (result.success) {
+                        WebApp.showAlert(
+                          isRussian
+                            ? 'Аккаунт успешно удален'
+                            : 'Account successfully deleted'
+                        );
+                        
+                        // Close the app or redirect to login
+                        setTimeout(() => {
+                          if (window.Telegram?.WebApp) {
+                            window.Telegram.WebApp.close();
+                          } else {
+                            // For web, reload the page
+                            window.location.href = '/';
+                          }
+                        }, 1000);
+                      } else {
+                        WebApp.showAlert(
+                          result.error ||
+                            (isRussian
+                              ? 'Ошибка при удалении аккаунта'
+                              : 'Error deleting account')
+                        );
+                        setIsDeletingAccount(false);
+                      }
+                    } catch (error) {
+                      console.error('Error deleting account:', error);
+                      WebApp.showAlert(
+                        isRussian
+                          ? 'Ошибка при удалении аккаунта'
+                          : 'Error deleting account'
+                      );
+                      setIsDeletingAccount(false);
+                    }
+                  }}
+                  disabled={isDeletingAccount}
+                  className="flex-1 px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                >
+                  {isDeletingAccount
+                    ? (() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Удаление...' : 'Deleting...';
+                      })()
+                    : (() => {
+                        const isRussian = window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'ru' || true;
+                        return isRussian ? 'Удалить' : 'Delete';
+                      })()}
                 </button>
               </div>
             </motion.div>
